@@ -77,6 +77,15 @@ jobs:
           --roll-forward latestPatch
           --force
 
+      - name: Verify project version
+        shell: bash
+        run: |
+          project_version="$(dotnet msbuild CameraView.Maui/CameraView.Maui.csproj --nologo -getProperty:Version)"
+          if [[ "$project_version" != "$PACKAGE_VERSION" ]]; then
+            echo "Project version '$project_version' does not match release version '$PACKAGE_VERSION'." >&2
+            exit 1
+          fi
+
       - name: Select Xcode 26.5
         run: sudo xcode-select --switch /Applications/Xcode_26.5.app
 
@@ -110,6 +119,30 @@ jobs:
           --nologo
           --output artifacts/nuget
           -p:PackageVersion="$PACKAGE_VERSION"
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Validate package metadata and Source Link
+        run: >-
+          dotnet run
+          --project build/CameraView.Maui.PackageValidation/CameraView.Maui.PackageValidation.csproj
+          --configuration Release
+          --
+          "artifacts/nuget/CameraView.Maui.$PACKAGE_VERSION.nupkg"
+          "$PACKAGE_VERSION"
+
+      - name: Restore package smoke test
+        run: >-
+          dotnet restore tests/CameraView.Maui.PackageSmokeTest/CameraView.Maui.PackageSmokeTest.csproj
+          -p:CameraViewPackageVersion="$PACKAGE_VERSION"
+          -p:RestoreAdditionalProjectSources="$GITHUB_WORKSPACE/artifacts/nuget"
+
+      - name: Build package smoke test
+        run: >-
+          dotnet build tests/CameraView.Maui.PackageSmokeTest/CameraView.Maui.PackageSmokeTest.csproj
+          --configuration Release
+          --no-restore
+          --nologo
+          -p:CameraViewPackageVersion="$PACKAGE_VERSION"
           -p:ContinuousIntegrationBuild=true
 
       - name: Upload release artifacts

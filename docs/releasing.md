@@ -32,11 +32,13 @@ The policy and workflow environment must match exactly. No `NUGET_API_KEY` secre
 4. Create and push an annotated SemVer tag:
 
 ```shell
-git tag -a v1.0.0 -m "CameraView.Maui 1.0.0"
-git push origin v1.0.0
+git tag -a v1.0.1 -m "CameraView.Maui 1.0.1"
+git push origin v1.0.1
 ```
 
-The workflow validates that the tag points to a commit contained in `master`, builds both target frameworks, creates `.nupkg` and `.snupkg` artifacts, obtains the temporary credential, and publishes both package and symbols.
+The workflow validates that the tag points to a commit contained in `master` and that the tag version matches the project version. It then builds both target frameworks, validates API compatibility against the previous stable package, creates and inspects `.nupkg` and `.snupkg` artifacts, builds a clean package consumer, obtains the temporary credential, and publishes both package and symbols.
+
+Package inspection verifies the NuGet ID and version, license, readme, release-notes URL, repository commit, target assemblies, Portable PDBs, and Source Link mappings before authentication is requested.
 
 NuGet packages are immutable. If a version was already published, fix the issue and release a new version.
 
@@ -53,4 +55,4 @@ Manual publishing is rejected for branches other than `master`.
 
 ## Package artifacts
 
-Every CI run retains an unpublished package for 14 days. Release workflows retain the exact published `.nupkg` and `.snupkg` files for 30 days.
+Every CI run retains an unpublished, validated package for 14 days. Release workflows retain the exact published `.nupkg` and `.snupkg` files for 30 days.

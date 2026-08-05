@@ -15,20 +15,20 @@ Public member names shown below are provisional until their implementation is re
 
 ## Planned releases
 
-| Version | Theme | Priority |
+| Version | Theme | Status |
 | --- | --- | --- |
-| 1.0.1 | Reliability and packaging hardening | Next |
-| 1.1.0 | .NET 10 and camera diagnostics | High |
-| 1.2.0 | Capture configuration and frame metadata | High |
-| 1.3.0 | Interactive camera controls | Medium |
-| 1.4.0 | High-quality still photo capture | Medium |
+| 1.0.1 | Reliability and packaging hardening | Released 2026-08-06 |
+| 1.1.0 | .NET 10 and camera diagnostics | Next |
+| 1.2.0 | Capture configuration and frame metadata | Planned |
+| 1.3.0 | Interactive camera controls | Planned |
+| 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |
 
 ## 1.0.1 — Reliability and packaging hardening
 
 This is a maintenance release with no new public API.
 
-Planned scope:
+Delivered scope:
 
 - Fix regressions found after the first NuGet release, prioritizing lifecycle, permission, and device-specific camera failures.
 - Add package-install and sample-build smoke tests to CI.

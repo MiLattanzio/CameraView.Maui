@@ -20,6 +20,7 @@ env:
   DOTNET_NOLOGO: 1
   DOTNET_CLI_TELEMETRY_OPTOUT: 1
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  PACKAGE_VERSION: 0.0.0-ci.${{ github.run_number }}
 
 jobs:
   build:
@@ -77,7 +78,31 @@ jobs:
           --no-build
           --nologo
           --output artifacts/nuget
-          -p:PackageVersion=0.0.0-ci.${{ github.run_number }}
+          -p:PackageVersion="$PACKAGE_VERSION"
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Validate package metadata and Source Link
+        run: >-
+          dotnet run
+          --project build/CameraView.Maui.PackageValidation/CameraView.Maui.PackageValidation.csproj
+          --configuration Release
+          --
+          "artifacts/nuget/CameraView.Maui.$PACKAGE_VERSION.nupkg"
+          "$PACKAGE_VERSION"
+
+      - name: Restore package smoke test
+        run: >-
+          dotnet restore tests/CameraView.Maui.PackageSmokeTest/CameraView.Maui.PackageSmokeTest.csproj
+          -p:CameraViewPackageVersion="$PACKAGE_VERSION"
+          -p:RestoreAdditionalProjectSources="$GITHUB_WORKSPACE/artifacts/nuget"
+
+      - name: Build package smoke test
+        run: >-
+          dotnet build tests/CameraView.Maui.PackageSmokeTest/CameraView.Maui.PackageSmokeTest.csproj
+          --configuration Release
+          --no-restore
+          --nologo
+          -p:CameraViewPackageVersion="$PACKAGE_VERSION"
           -p:ContinuousIntegrationBuild=true
 
       - name: Upload NuGet artifacts
