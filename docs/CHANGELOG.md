@@ -6,6 +6,8 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-05
+
 ### Added
 
 - Native Camera2 preview and JPEG frame capture on Android.
@@ -21,8 +23,5 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - Corrected Android/iOS handler namespace resolution and XAML namespace usage.
 - Camera sessions are released on app deactivation and restored after screen unlock or resume.
 
-When preparing a release, move these entries to a versioned section in the form:
-
-```text
-## [1.0.0] - YYYY-MM-DD
-```
+[Unreleased]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/MiLattanzio/CameraView.Maui/releases/tag/v1.0.0
