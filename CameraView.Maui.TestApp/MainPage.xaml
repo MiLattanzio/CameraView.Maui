@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:camera="clr-namespace:CameraView.Maui;assembly=CameraView.Maui"
+             x:Class="CameraView.Maui.TestApp.MainPage"
+             BackgroundColor="Black">
+
+    <Grid RowDefinitions="*,Auto">
+        <camera:CameraView x:Name="CameraPreview"
+                           Grid.Row="0"
+                           Camera="Rear"
+                           Orientation="Portrait"
+                           HorizontalOptions="Fill"
+                           VerticalOptions="Fill" />
+
+        <Border Grid.Row="1"
+                BackgroundColor="#E6191919"
+                StrokeThickness="0"
+                Padding="16,12">
+            <VerticalStackLayout Spacing="10">
+                <Label x:Name="StatusLabel"
+                       Text="In attesa del primo frame…"
+                       TextColor="White"
+                       HorizontalTextAlignment="Center" />
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                    <Button Grid.Column="0"
+                            Text="Cambia camera"
+                            Clicked="OnSwitchCameraClicked" />
+                    <Button x:Name="ToggleButton"
+                            Grid.Column="1"
+                            Text="Disattiva"
+                            Clicked="OnToggleCameraClicked" />
+                    <Button x:Name="OrientationButton"
+                            Grid.Column="2"
+                            Text="Landscape"
+                            Clicked="OnToggleOrientationClicked" />
+                </Grid>
+            </VerticalStackLayout>
+        </Border>
+    </Grid>
+</ContentPage>
