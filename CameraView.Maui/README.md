@@ -40,23 +40,102 @@ builder
 </ContentPage>
 ```
 
-Subscribe to `OnFrameResult` to receive JPEG frames:
+Subscribe to `OnFrameResult` to receive JPEG frames. The callback runs on a native capture queue, so marshal UI updates to the main thread:
 
 ```csharp
-CameraPreview.OnFrameResult += result =>
+private void OnFrameResult(CameraResult result)
 {
     if (!result.Success || result.Image is null)
         return;
 
-    // Frame callbacks are raised from a native capture queue.
+    byte[] jpeg = result.Image;
+
     MainThread.BeginInvokeOnMainThread(() =>
     {
-        // Update UI state here.
+        StatusLabel.Text = $"Received {jpeg.Length:N0} bytes";
     });
-};
+}
 ```
 
-Set `Enabled` to `false` when preview or capture is not required. The control releases the camera while the app is inactive and restarts it when the app resumes if `Enabled` remains `true`.
+Subscribe and unsubscribe with the page lifecycle:
+
+```csharp
+protected override void OnAppearing()
+{
+    base.OnAppearing();
+    CameraPreview.OnFrameResult += OnFrameResult;
+    CameraPreview.Enabled = true;
+}
+
+protected override void OnDisappearing()
+{
+    CameraPreview.Enabled = false;
+    CameraPreview.OnFrameResult -= OnFrameResult;
+    base.OnDisappearing();
+}
+```
+
+`CameraResult.Image` is a complete JPEG byte array. It can be saved directly:
+
+```csharp
+var path = Path.Combine(FileSystem.CacheDirectory, "camera-frame.jpg");
+await File.WriteAllBytesAsync(path, result.Image);
+```
+
+## Processing frames
+
+Frames can arrive faster than OCR, barcode, ML, upload, or disk processing can finish. Avoid starting an unlimited number of tasks. This gate drops incoming frames while one frame is being processed:
+
+```csharp
+private readonly SemaphoreSlim _frameGate = new(1, 1);
+
+private async void OnFrameResult(CameraResult result)
+{
+    if (!result.Success ||
+        result.Image is null ||
+        !_frameGate.Wait(0))
+        return;
+
+    try
+    {
+        using var stream = new MemoryStream(result.Image, writable: false);
+
+        // Pass stream or result.Image to the selected processor.
+        await ProcessJpegAsync(stream);
+    }
+    catch (Exception exception)
+    {
+        System.Diagnostics.Debug.WriteLine(
+            $"Frame processing failed: {exception}");
+    }
+    finally
+    {
+        _frameGate.Release();
+    }
+}
+
+private static Task ProcessJpegAsync(Stream jpeg)
+{
+    // Call the selected OCR, barcode, ML, upload, or decoder API.
+    return Task.CompletedTask;
+}
+```
+
+For “latest frame wins” processing, use a bounded `Channel<byte[]>` with capacity one and `BoundedChannelFullMode.DropOldest`. The [full example](https://github.com/MiLattanzio/CameraView.Maui#process-frames-without-building-a-backlog) includes lifecycle cancellation.
+
+CameraView.Maui does not force a specific decoder. If the processor needs pixels instead of JPEG bytes, decode off the UI thread with a mobile-compatible image library, dispose decoder resources promptly, and move only final UI updates to `MainThread`.
+
+Do not render every callback into another MAUI `Image`: `CameraView` already displays a native live preview, and a second decode adds avoidable CPU and allocation pressure.
+
+## Camera state
+
+```csharp
+CameraPreview.Camera = CameraOptions.Front;
+CameraPreview.Orientation = CameraOrientation.Landscape;
+CameraPreview.Enabled = false;
+```
+
+Changing `Camera` or `Orientation` reconfigures the native session. Set `Enabled` to `false` when preview or capture is not required. The control releases the camera while the app is inactive and restarts it when the app resumes if `Enabled` remains `true`.
 
 ## Permissions
 
