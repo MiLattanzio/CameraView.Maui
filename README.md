@@ -14,10 +14,12 @@ CameraView.Maui is a reusable .NET MAUI camera preview control for Android and i
 - JPEG frame callbacks.
 - Runtime permission requests.
 - Automatic camera release and restart across app deactivation, screen lock, and resume.
+- Observable camera state and structured cross-platform errors.
+- .NET 9 and .NET 10 MAUI targets in the same package.
 
 ## Requirements
 
-- .NET 9 MAUI.
+- .NET 9 or .NET 10 MAUI.
 - Android API 28 or later.
 - iOS 15.0 or later.
 
@@ -95,7 +97,7 @@ Important frame characteristics:
 - `Image` contains a complete JPEG byte array, not raw RGB/YUV pixels.
 - The callback runs on a native capture queue and is not guaranteed to be the UI thread.
 - A new frame can arrive before processing of the previous frame has completed.
-- Throwing from the callback can disrupt native capture work, so handle processing errors locally.
+- Exceptions from individual subscribers are isolated and written to debug output; still handle processing errors locally so failed work is visible to the application.
 
 ## Process frames without building a backlog
 
@@ -269,6 +271,31 @@ CameraPreview.Enabled = true;
 
 The control also releases the native camera when the MAUI window is deactivated and restores it after activation if `Enabled` remains `true`.
 
+## Observe camera state and errors
+
+`State` and `IsRunning` describe the actual native session, rather than only the requested value of `Enabled`:
+
+```csharp
+CameraPreview.StateChanged += (_, args) =>
+{
+    // StateChanged is dispatched through the MAUI dispatcher.
+    StateLabel.Text = $"{args.State} ({args.Camera})";
+};
+
+CameraPreview.ErrorOccurred += (_, args) =>
+{
+    ErrorLabel.Text = $"{args.Code}: {args.Message}";
+
+    System.Diagnostics.Debug.WriteLine(
+        $"Native code: {args.PlatformCode}; " +
+        $"recoverable: {args.IsRecoverable}; {args.Exception}");
+};
+```
+
+Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, and `Failed`. Stable error codes distinguish permission denial, unavailable or busy cameras, session configuration failures, device disconnection, and frame capture failures.
+
+`StateChanged` and `ErrorOccurred` run through the view dispatcher. `OnFrameResult` continues to run on the native capture queue for throughput.
+
 ## API summary
 
 | Member | Default | Description |
@@ -276,7 +303,11 @@ The control also releases the native camera when the MAUI window is deactivated 
 | `Camera` | `CameraOptions.Rear` | Selects the rear or front camera. |
 | `Orientation` | `CameraOrientation.Landscape` | Controls portrait or landscape output. |
 | `Enabled` | `true` | Controls native camera ownership and capture. |
+| `State` | `CameraState.Stopped` | Reports the current native camera lifecycle state. |
+| `IsRunning` | `false` | Indicates that native capture is actually running. |
 | `OnFrameResult` | — | Emits successful JPEG frames through `CameraResult.Image`. |
+| `StateChanged` | — | Reports state transitions on the MAUI dispatcher. |
+| `ErrorOccurred` | — | Reports structured camera failures on the MAUI dispatcher. |
 
 ## Frame-processing recommendations
 

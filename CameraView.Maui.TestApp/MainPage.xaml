@@ -18,9 +18,20 @@
                 StrokeThickness="0"
                 Padding="16,12">
             <VerticalStackLayout Spacing="10">
+                <Label x:Name="StateLabel"
+                       Text="Stato: Stopped"
+                       FontAttributes="Bold"
+                       TextColor="White"
+                       HorizontalTextAlignment="Center" />
+
                 <Label x:Name="StatusLabel"
                        Text="In attesa del primo frame…"
                        TextColor="White"
+                       HorizontalTextAlignment="Center" />
+
+                <Label x:Name="ErrorLabel"
+                       IsVisible="False"
+                       TextColor="#FFFF8A80"
                        HorizontalTextAlignment="Center" />
 
                 <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">

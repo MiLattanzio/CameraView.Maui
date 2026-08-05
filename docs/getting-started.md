@@ -8,7 +8,7 @@ Add CameraView.Maui to the MAUI application project:
 dotnet add package CameraView.Maui
 ```
 
-The application must target a supported .NET MAUI Android or iOS framework.
+The application must target a supported .NET 9 or .NET 10 MAUI Android or iOS framework.
 
 ## 2. Register the handler
 
@@ -82,6 +82,36 @@ private void OnFrameResult(CameraResult result)
 ```
 
 Frame callbacks run on a native capture queue. Marshal UI work to the MAUI main thread and keep the callback short so the camera pipeline is not delayed.
+
+## 6. Observe camera state and errors
+
+`StateChanged` and `ErrorOccurred` run through the MAUI dispatcher, so their handlers can update page controls directly:
+
+```csharp
+public CameraPage()
+{
+    InitializeComponent();
+    CameraPreview.StateChanged += OnCameraStateChanged;
+    CameraPreview.ErrorOccurred += OnCameraError;
+}
+
+private void OnCameraStateChanged(
+    object sender,
+    CameraStateChangedEventArgs args)
+{
+    StateLabel.Text = $"{args.State} ({args.Camera})";
+}
+
+private void OnCameraError(object sender, CameraErrorEventArgs args)
+{
+    ErrorLabel.Text = $"{args.Code}: {args.Message}";
+
+    if (!args.IsRecoverable)
+        RetryButton.IsEnabled = false;
+}
+```
+
+Use `CameraPreview.State` for the current state and `CameraPreview.IsRunning` when only an active-session check is required. `Camera` remains the requested and selected camera position.
 
 ## Camera state
 

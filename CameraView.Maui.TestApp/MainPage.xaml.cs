@@ -9,6 +9,8 @@ public partial class MainPage : ContentPage
     {
         InitializeComponent();
         CameraPreview.OnFrameResult += OnFrameResult;
+        CameraPreview.StateChanged += OnCameraStateChanged;
+        CameraPreview.ErrorOccurred += OnCameraError;
     }
 
     protected override void OnAppearing()
@@ -40,6 +42,27 @@ public partial class MainPage : ContentPage
             StatusLabel.Text = $"Frame {frameCount:N0} · {result.Image.Length:N0} byte");
     }
 
+    private void OnCameraStateChanged(
+        object sender,
+        CameraStateChangedEventArgs eventArgs)
+    {
+        StateLabel.Text = $"Stato: {eventArgs.State} · Camera: {eventArgs.Camera}";
+        ToggleButton.Text = eventArgs.State == CameraState.Stopped ? "Attiva" : "Disattiva";
+
+        if (eventArgs.State is CameraState.Starting or CameraState.Running)
+        {
+            ErrorLabel.IsVisible = false;
+            ErrorLabel.Text = string.Empty;
+        }
+    }
+
+    private void OnCameraError(object sender, CameraErrorEventArgs eventArgs)
+    {
+        ErrorLabel.Text =
+            $"{eventArgs.Code}: {eventArgs.Message} (recuperabile: {eventArgs.IsRecoverable})";
+        ErrorLabel.IsVisible = true;
+    }
+
     private void OnSwitchCameraClicked(object sender, EventArgs e) =>
         CameraPreview.Camera = CameraPreview.Camera == CameraOptions.Rear
             ? CameraOptions.Front
@@ -48,8 +71,6 @@ public partial class MainPage : ContentPage
     private void OnToggleCameraClicked(object sender, EventArgs e)
     {
         CameraPreview.Enabled = !CameraPreview.Enabled;
-        ToggleButton.Text = CameraPreview.Enabled ? "Disattiva" : "Attiva";
-        StatusLabel.Text = CameraPreview.Enabled ? "Avvio camera…" : "Camera disattivata";
     }
 
     private void OnToggleOrientationClicked(object sender, EventArgs e)

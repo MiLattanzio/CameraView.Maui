@@ -17,6 +17,12 @@ public sealed class NativeCameraView : UIView
     private AVCaptureVideoDataOutput _videoOutput;
     private VideoCaptureDelegate _captureDelegate;
     private Action<byte[]> _frameCaptured;
+    private Action _captureStarted;
+    private Action _captureSuspended;
+    private Action<CameraFailure> _captureFailed;
+    private NSObject _runtimeErrorObserver;
+    private NSObject _wasInterruptedObserver;
+    private NSObject _interruptionEndedObserver;
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
     private bool _isRunning;
@@ -31,13 +37,25 @@ public sealed class NativeCameraView : UIView
     public void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[]> frameCaptured)
+        Action<byte[]> frameCaptured) =>
+        Start(cameraOption, orientation, frameCaptured, null, null, null);
+
+    internal void Start(
+        CameraOptions cameraOption,
+        CameraOrientation orientation,
+        Action<byte[]> frameCaptured,
+        Action captureStarted,
+        Action captureSuspended,
+        Action<CameraFailure> captureFailed)
     {
         if (_isRunning &&
             _cameraOption == cameraOption &&
             _orientation == orientation)
         {
             _frameCaptured = frameCaptured;
+            _captureStarted = captureStarted;
+            _captureSuspended = captureSuspended;
+            _captureFailed = captureFailed;
             return;
         }
 
@@ -46,38 +64,76 @@ public sealed class NativeCameraView : UIView
         _cameraOption = cameraOption;
         _orientation = orientation;
         _frameCaptured = frameCaptured;
-        _captureSession = new AVCaptureSession
-        {
-            SessionPreset = AVCaptureSession.Preset1280x720
-        };
+        _captureStarted = captureStarted;
+        _captureSuspended = captureSuspended;
+        _captureFailed = captureFailed;
 
-        _captureSession.BeginConfiguration();
         try
         {
-            ConfigureInput(cameraOption);
-            ConfigureOutput();
-        }
-        finally
-        {
-            _captureSession.CommitConfiguration();
-        }
+            _captureSession = new AVCaptureSession
+            {
+                SessionPreset = AVCaptureSession.Preset1280x720
+            };
 
-        _previewLayer = new AVCaptureVideoPreviewLayer(_captureSession)
-        {
-            Frame = Bounds,
-            VideoGravity = AVLayerVideoGravity.ResizeAspectFill
-        };
-        ConfigureConnection(_previewLayer.Connection);
-        Layer.InsertSublayer(_previewLayer, 0);
+            _captureSession.BeginConfiguration();
+            try
+            {
+                ConfigureInput(cameraOption);
+                ConfigureOutput();
+            }
+            finally
+            {
+                _captureSession.CommitConfiguration();
+            }
 
-        _isRunning = true;
-        _captureSession.StartRunning();
+            _previewLayer = new AVCaptureVideoPreviewLayer(_captureSession)
+            {
+                Frame = Bounds,
+                VideoGravity = AVLayerVideoGravity.ResizeAspectFill
+            };
+            ConfigureConnection(_previewLayer.Connection);
+            Layer.InsertSublayer(_previewLayer, 0);
+
+            ObserveSession();
+            _isRunning = true;
+            _captureSession.StartRunning();
+            if (!_captureSession.Running)
+            {
+                throw new CameraPlatformException(new CameraFailure(
+                    CameraErrorCode.CameraUnavailable,
+                    "iOS did not start the camera session.",
+                    true,
+                    "SessionNotRunning"));
+            }
+
+            _captureStarted?.Invoke();
+        }
+        catch (CameraPlatformException)
+        {
+            Stop();
+            throw;
+        }
+        catch (System.Exception exception)
+        {
+            Stop();
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.Unknown,
+                "iOS could not start the camera.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
     }
 
     public void Stop()
     {
         _isRunning = false;
         _frameCaptured = null;
+        _captureStarted = null;
+        _captureSuspended = null;
+        _captureFailed = null;
+
+        DisposeSessionObservers();
 
         if (_captureSession?.Running == true)
             _captureSession.StopRunning();
@@ -115,7 +171,11 @@ public sealed class NativeCameraView : UIView
             AVCaptureDeviceType.BuiltInWideAngleCamera,
             AVMediaTypes.Video,
             position)
-            ?? throw new InvalidOperationException($"No {cameraOption} camera was found.");
+            ?? throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.CameraUnavailable,
+                $"No {cameraOption} camera was found.",
+                false,
+                "CameraNotFound"));
 
         NSError configurationError = null;
         if (device.IsFocusModeSupported(AVCaptureFocusMode.ContinuousAutoFocus) &&
@@ -130,15 +190,26 @@ public sealed class NativeCameraView : UIView
         if (input is null)
         {
             var message = inputError?.LocalizedDescription ?? "Unknown camera input error.";
+            var failure = inputError is null
+                ? new CameraFailure(
+                    CameraErrorCode.CameraUnavailable,
+                    message,
+                    true,
+                    "CameraInputUnavailable")
+                : MapAvError(inputError, message);
             inputError?.Dispose();
-            throw new InvalidOperationException(message);
+            throw new CameraPlatformException(failure);
         }
         inputError?.Dispose();
 
         if (!_captureSession.CanAddInput(input))
         {
             input.Dispose();
-            throw new InvalidOperationException("The camera input cannot be added to the capture session.");
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                "The camera input cannot be added to the capture session.",
+                true,
+                "CannotAddCameraInput"));
         }
 
         _captureSession.AddInput(input);
@@ -146,7 +217,7 @@ public sealed class NativeCameraView : UIView
 
     private void ConfigureOutput()
     {
-        _captureDelegate = new VideoCaptureDelegate(EmitFrame);
+        _captureDelegate = new VideoCaptureDelegate(EmitFrame, ReportFailure);
         _videoOutput = new AVCaptureVideoDataOutput
         {
             AlwaysDiscardsLateVideoFrames = true
@@ -160,7 +231,13 @@ public sealed class NativeCameraView : UIView
 
         _videoOutput.SetSampleBufferDelegate(_captureDelegate, _captureQueue);
         if (!_captureSession.CanAddOutput(_videoOutput))
-            throw new InvalidOperationException("The camera output cannot be added to the capture session.");
+        {
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                "The camera output cannot be added to the capture session.",
+                true,
+                "CannotAddVideoOutput"));
+        }
 
         _captureSession.AddOutput(_videoOutput);
         ConfigureConnection(_videoOutput.ConnectionFromMediaType(AVMediaTypes.Video.GetConstant()));
@@ -197,7 +274,114 @@ public sealed class NativeCameraView : UIView
             _frameCaptured?.Invoke(bytes);
     }
 
-    private sealed class VideoCaptureDelegate(Action<byte[]> frameCaptured)
+    private void ObserveSession()
+    {
+        _runtimeErrorObserver = AVCaptureSession.Notifications.ObserveRuntimeError(
+            _captureSession,
+            OnRuntimeError);
+        _wasInterruptedObserver = AVCaptureSession.Notifications.ObserveWasInterrupted(
+            _captureSession,
+            OnWasInterrupted);
+        _interruptionEndedObserver = AVCaptureSession.Notifications.ObserveInterruptionEnded(
+            _captureSession,
+            OnInterruptionEnded);
+    }
+
+    private void DisposeSessionObservers()
+    {
+        _runtimeErrorObserver?.Dispose();
+        _runtimeErrorObserver = null;
+        _wasInterruptedObserver?.Dispose();
+        _wasInterruptedObserver = null;
+        _interruptionEndedObserver?.Dispose();
+        _interruptionEndedObserver = null;
+    }
+
+    private void OnRuntimeError(
+        object sender,
+        AVCaptureSessionRuntimeErrorEventArgs eventArgs) =>
+        ReportFailure(MapAvError(eventArgs.Error, eventArgs.Error.LocalizedDescription));
+
+    private void OnWasInterrupted(object sender, NSNotificationEventArgs eventArgs)
+    {
+        if (_isRunning)
+            _captureSuspended?.Invoke();
+    }
+
+    private void OnInterruptionEnded(object sender, NSNotificationEventArgs eventArgs)
+    {
+        if (!_isRunning || _captureSession is null)
+            return;
+
+        try
+        {
+            if (!_captureSession.Running)
+                _captureSession.StartRunning();
+
+            if (_captureSession.Running)
+                _captureStarted?.Invoke();
+            else
+                ReportFailure(new CameraFailure(
+                    CameraErrorCode.CameraUnavailable,
+                    "The iOS camera session did not resume after interruption.",
+                    true,
+                    "InterruptionResumeFailed"));
+        }
+        catch (System.Exception exception)
+        {
+            ReportFailure(new CameraFailure(
+                CameraErrorCode.CameraUnavailable,
+                "The iOS camera session could not resume after interruption.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
+    }
+
+    private void ReportFailure(CameraFailure failure) =>
+        _captureFailed?.Invoke(failure);
+
+    private static CameraFailure MapAvError(NSError error, string message)
+    {
+        var code = (AVError)(long)error.Code;
+        var platformCode = $"{error.Domain}:{error.Code}";
+        return code switch
+        {
+            AVError.ApplicationIsNotAuthorizedToUseDevice or
+            AVError.ApplicationIsNotAuthorized => new CameraFailure(
+                CameraErrorCode.PermissionDenied,
+                message,
+                false,
+                platformCode),
+            AVError.DeviceInUseByAnotherApplication or
+            AVError.DeviceAlreadyUsedByAnotherSession or
+            AVError.DeviceLockedForConfigurationByAnotherProcess => new CameraFailure(
+                CameraErrorCode.CameraInUse,
+                message,
+                true,
+                platformCode),
+            AVError.DeviceNotConnected or
+            AVError.DeviceWasDisconnected => new CameraFailure(
+                CameraErrorCode.DeviceDisconnected,
+                message,
+                true,
+                platformCode),
+            AVError.NoDataCaptured => new CameraFailure(
+                CameraErrorCode.CaptureFailed,
+                message,
+                true,
+                platformCode),
+            _ => new CameraFailure(
+                CameraErrorCode.CameraUnavailable,
+                message,
+                true,
+                platformCode)
+        };
+    }
+
+    private sealed class VideoCaptureDelegate(
+        Action<byte[]> frameCaptured,
+        Action<CameraFailure> captureFailed)
         : AVCaptureVideoDataOutputSampleBufferDelegate
     {
         private readonly CIContext _imageContext = CIContext.FromOptions(null);
@@ -222,6 +406,15 @@ public sealed class NativeCameraView : UIView
                 using var imageData = uiImage.AsJPEG(0.85f);
                 if (imageData is not null)
                     frameCaptured(imageData.ToArray());
+            }
+            catch (System.Exception exception)
+            {
+                captureFailed(new CameraFailure(
+                    CameraErrorCode.CaptureFailed,
+                    "iOS could not encode a camera frame.",
+                    true,
+                    exception.GetType().Name,
+                    exception));
             }
             finally
             {

@@ -88,7 +88,9 @@ internal static partial class PackageValidator
 
         RequireTarget(assemblies, "net9.0-android");
         RequireTarget(assemblies, "net9.0-ios");
-        Require(assemblies.Length == 2, "The package must contain exactly two target assemblies.");
+        RequireTarget(assemblies, "net10.0-android");
+        RequireTarget(assemblies, "net10.0-ios");
+        Require(assemblies.Length == 4, "The package must contain exactly four target assemblies.");
 
         return commit!;
     }
@@ -116,7 +118,9 @@ internal static partial class PackageValidator
 
         RequireTarget(pdbEntries.Select(entry => entry.FullName), "net9.0-android");
         RequireTarget(pdbEntries.Select(entry => entry.FullName), "net9.0-ios");
-        Require(pdbEntries.Length == 2, "The symbol package must contain exactly two PDB files.");
+        RequireTarget(pdbEntries.Select(entry => entry.FullName), "net10.0-android");
+        RequireTarget(pdbEntries.Select(entry => entry.FullName), "net10.0-ios");
+        Require(pdbEntries.Length == 4, "The symbol package must contain exactly four PDB files.");
 
         foreach (var pdbEntry in pdbEntries)
             ValidateSourceLink(pdbEntry, repositoryCommit);

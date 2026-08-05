@@ -68,12 +68,12 @@ jobs:
       - name: Set up .NET SDK
         uses: actions/setup-dotnet@v6
         with:
-          dotnet-version: 9.0.316
+          dotnet-version: 10.0.302
 
       - name: Pin .NET SDK
         run: >-
           dotnet new globaljson
-          --sdk-version 9.0.316
+          --sdk-version 10.0.302
           --roll-forward latestPatch
           --force
 

@@ -6,6 +6,28 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-06
+
+### Added
+
+- .NET 10 Android and iOS targets alongside the existing .NET 9 targets.
+- Read-only `State` and `IsRunning` properties for the actual native camera lifecycle.
+- Dispatcher-based `StateChanged` notifications with previous state and selected camera.
+- Structured `ErrorOccurred` notifications with stable cross-platform codes, native diagnostics, recoverability, and exceptions.
+- Native Camera2 and AVFoundation error, disconnection, runtime-error, and interruption reporting.
+- State-driven diagnostics in the sample application and package smoke test.
+
+### Changed
+
+- CI and publishing now use .NET SDK 10.0.302 and validate four Android/iOS target assemblies and symbol files.
+- Package compatibility is checked against version 1.0.1.
+- Exceptions from frame, state, and error subscribers are isolated and written to debug output instead of escaping into native capture callbacks.
+
+### Fixed
+
+- `Running` is reported only after the native repeating request or capture session has actually started.
+- Stale native callbacks cannot change state after a newer configuration or lifecycle transition.
+
 ## [1.0.1] - 2026-08-06
 
 ### Added
@@ -37,6 +59,7 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - Corrected Android/iOS handler namespace resolution and XAML namespace usage.
 - Camera sessions are released on app deactivation and restored after screen unlock or resume.
 
-[Unreleased]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/MiLattanzio/CameraView.Maui/releases/tag/v1.0.0

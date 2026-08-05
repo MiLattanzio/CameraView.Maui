@@ -25,6 +25,24 @@ public static class PackageConsumer
             if (result.Success && result.Image is { Length: > 0 })
                 consumeFrame(result.Image);
         };
+        preview.StateChanged += (_, eventArgs) =>
+        {
+            _ = eventArgs.PreviousState;
+            _ = eventArgs.State;
+            _ = eventArgs.Camera;
+        };
+        preview.ErrorOccurred += (_, eventArgs) =>
+        {
+            _ = eventArgs.Code;
+            _ = eventArgs.Message;
+            _ = eventArgs.Camera;
+            _ = eventArgs.IsRecoverable;
+            _ = eventArgs.PlatformCode;
+            _ = eventArgs.Exception;
+        };
+
+        _ = preview.State;
+        _ = preview.IsRunning;
 
         return preview;
     }

@@ -8,6 +8,8 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
     private readonly SemaphoreSlim _configurationLock = new(1, 1);
     private Window _window;
     private int _configurationVersion;
+    private bool _isLoaded;
+    private bool _isWindowActive = true;
 
     public static readonly IPropertyMapper<CameraView, CameraViewHandler> Mapper =
         new PropertyMapper<CameraView, CameraViewHandler>(ViewMapper)
@@ -27,6 +29,8 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
     {
         base.ConnectHandler(platformView);
 
+        _isLoaded = VirtualView.IsLoaded;
+        _isWindowActive = true;
         VirtualView.Loaded += OnVirtualViewLoaded;
         VirtualView.Unloaded += OnVirtualViewUnloaded;
         AttachToWindow(VirtualView.Window);
@@ -38,7 +42,9 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
         VirtualView.Loaded -= OnVirtualViewLoaded;
         VirtualView.Unloaded -= OnVirtualViewUnloaded;
         AttachToWindow(null);
-        SuspendConfiguration();
+        _isLoaded = false;
+        _isWindowActive = false;
+        SuspendConfiguration(CameraState.Stopped);
         base.DisconnectHandler(platformView);
     }
 
@@ -47,14 +53,17 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
 
     private void OnVirtualViewLoaded(object sender, EventArgs eventArgs)
     {
+        _isLoaded = true;
+        _isWindowActive = true;
         AttachToWindow(VirtualView?.Window);
         ApplyConfiguration();
     }
 
     private void OnVirtualViewUnloaded(object sender, EventArgs eventArgs)
     {
+        _isLoaded = false;
         AttachToWindow(null);
-        SuspendConfiguration();
+        SuspendConfiguration(CameraState.Suspended);
     }
 
     private void AttachToWindow(Window window)
@@ -76,16 +85,26 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
         }
     }
 
-    private void OnWindowActivated(object sender, EventArgs eventArgs) =>
+    private void OnWindowActivated(object sender, EventArgs eventArgs)
+    {
+        _isWindowActive = true;
         ApplyConfiguration();
+    }
 
-    private void OnWindowDeactivated(object sender, EventArgs eventArgs) =>
-        SuspendConfiguration();
+    private void OnWindowDeactivated(object sender, EventArgs eventArgs)
+    {
+        _isWindowActive = false;
+        SuspendConfiguration(CameraState.Suspended);
+    }
 
-    private void SuspendConfiguration()
+    private void SuspendConfiguration(CameraState state)
     {
         Interlocked.Increment(ref _configurationVersion);
         PlatformView?.Stop();
+
+        var cameraView = VirtualView;
+        if (cameraView is not null)
+            cameraView.SetCameraState(cameraView.Enabled ? state : CameraState.Stopped);
     }
 
     private void ApplyConfiguration()
@@ -96,17 +115,28 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             return;
 
         var version = Interlocked.Increment(ref _configurationVersion);
+        platformView.Stop();
+
         if (!cameraView.Enabled)
         {
-            platformView.Stop();
+            cameraView.SetCameraState(CameraState.Stopped);
             return;
         }
 
-        platformView.Stop();
+        if (!_isLoaded || !_isWindowActive)
+        {
+            cameraView.SetCameraState(CameraState.Suspended);
+            return;
+        }
+
+        cameraView.SetCameraState(CameraState.Starting);
         _ = StartAsync(platformView, cameraView, version);
     }
 
-    private async Task StartAsync(NativeCameraView platformView, CameraView cameraView, int version)
+    private async Task StartAsync(
+        NativeCameraView platformView,
+        CameraView cameraView,
+        int version)
     {
         await _configurationLock.WaitAsync();
         try
@@ -118,24 +148,115 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             if (status != PermissionStatus.Granted)
                 status = await Permissions.RequestAsync<Permissions.Camera>();
 
-            if (status != PermissionStatus.Granted ||
-                !IsCurrentConfiguration(platformView, cameraView, version))
+            if (!IsCurrentConfiguration(platformView, cameraView, version))
                 return;
 
-            platformView.Start(cameraView.Camera, cameraView.Orientation, cameraView.SetResult);
+            if (status != PermissionStatus.Granted)
+            {
+                DispatchFailure(
+                    platformView,
+                    cameraView,
+                    version,
+                    CameraState.PermissionDenied,
+                    new CameraFailure(
+                        CameraErrorCode.PermissionDenied,
+                        "Camera permission was denied.",
+                        true,
+                        status.ToString()));
+                return;
+            }
+
+            platformView.Start(
+                cameraView.Camera,
+                cameraView.Orientation,
+                cameraView.SetResult,
+                () => DispatchState(
+                    platformView,
+                    cameraView,
+                    version,
+                    CameraState.Running),
+                () => DispatchState(
+                    platformView,
+                    cameraView,
+                    version,
+                    CameraState.Suspended),
+                failure => DispatchFailure(
+                    platformView,
+                    cameraView,
+                    version,
+                    GetFailureState(failure),
+                    failure));
+        }
+        catch (CameraPlatformException exception)
+        {
+            DispatchFailure(
+                platformView,
+                cameraView,
+                version,
+                GetFailureState(exception.Failure),
+                exception.Failure);
         }
         catch (Exception exception)
         {
-            if (ReferenceEquals(platformView, PlatformView))
-                platformView.Stop();
-
-            Debug.WriteLine($"Unable to start the camera: {exception}");
+            DispatchFailure(
+                platformView,
+                cameraView,
+                version,
+                CameraState.Failed,
+                new CameraFailure(
+                    CameraErrorCode.Unknown,
+                    "Unable to start the camera.",
+                    true,
+                    exception.GetType().Name,
+                    exception));
         }
         finally
         {
             _configurationLock.Release();
         }
     }
+
+    private void DispatchState(
+        NativeCameraView platformView,
+        CameraView cameraView,
+        int version,
+        CameraState state) =>
+        Dispatch(cameraView, () =>
+        {
+            if (IsCurrentConfiguration(platformView, cameraView, version))
+                cameraView.SetCameraState(state);
+        });
+
+    private void DispatchFailure(
+        NativeCameraView platformView,
+        CameraView cameraView,
+        int version,
+        CameraState state,
+        CameraFailure failure) =>
+        Dispatch(cameraView, () =>
+        {
+            if (!IsCurrentConfiguration(platformView, cameraView, version))
+                return;
+
+            Interlocked.Increment(ref _configurationVersion);
+            platformView.Stop();
+            cameraView.ReportCameraFailure(state, failure);
+            Debug.WriteLine(
+                $"Camera failure {failure.Code} ({failure.PlatformCode}): {failure.Message} {failure.Exception}");
+        });
+
+    private static void Dispatch(CameraView cameraView, Action action)
+    {
+        if (cameraView.Dispatcher.IsDispatchRequired)
+            cameraView.Dispatcher.Dispatch(action);
+        else
+            action();
+    }
+
+    private static CameraState GetFailureState(CameraFailure failure) =>
+        failure.Code == CameraErrorCode.PermissionDenied
+            ? CameraState.PermissionDenied
+            : CameraState.Failed;
 
     private bool IsCurrentConfiguration(
         NativeCameraView platformView,
@@ -144,7 +265,9 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
         version == Volatile.Read(ref _configurationVersion) &&
         ReferenceEquals(platformView, PlatformView) &&
         ReferenceEquals(cameraView, VirtualView) &&
-        cameraView.Enabled;
+        cameraView.Enabled &&
+        _isLoaded &&
+        _isWindowActive;
 
     private partial NativeCameraView CreateNativeCameraView();
 }

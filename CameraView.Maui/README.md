@@ -2,6 +2,8 @@
 
 CameraView.Maui is a .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation and emits encoded JPEG frames through `OnFrameResult`.
 
+The package supports .NET 9 and .NET 10 MAUI applications.
+
 ## Supported platforms
 
 | Platform | Minimum version |
@@ -136,6 +138,18 @@ CameraPreview.Enabled = false;
 ```
 
 Changing `Camera` or `Orientation` reconfigures the native session. Set `Enabled` to `false` when preview or capture is not required. The control releases the camera while the app is inactive and restarts it when the app resumes if `Enabled` remains `true`.
+
+Observe the actual native state and structured failures:
+
+```csharp
+CameraPreview.StateChanged += (_, args) =>
+    StateLabel.Text = $"{args.State} ({args.Camera})";
+
+CameraPreview.ErrorOccurred += (_, args) =>
+    ErrorLabel.Text = $"{args.Code}: {args.Message}";
+```
+
+`StateChanged` and `ErrorOccurred` run through the MAUI dispatcher. `State` can be `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, or `Failed`; `IsRunning` is true only for an active native session. `OnFrameResult` remains on the native capture queue.
 
 ## Permissions
 

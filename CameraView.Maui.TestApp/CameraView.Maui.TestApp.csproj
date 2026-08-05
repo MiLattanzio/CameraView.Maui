@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net9.0-android;net9.0-ios</TargetFrameworks>
+    <TargetFrameworks>net9.0-android;net9.0-ios;net10.0-android;net10.0-ios</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <RootNamespace>CameraView.Maui.TestApp</RootNamespace>
     <AssemblyName>CameraView.Maui.TestApp</AssemblyName>
@@ -10,6 +10,9 @@
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <MauiVersion>9.0.120</MauiVersion>
+    <MauiVersion Condition="'$(TargetFramework)' == 'net10.0-android' Or '$(TargetFramework)' == 'net10.0-ios'">10.0.90</MauiVersion>
+    <LoggingVersion>9.0.5</LoggingVersion>
+    <LoggingVersion Condition="'$(TargetFramework)' == 'net10.0-android' Or '$(TargetFramework)' == 'net10.0-ios'">10.0.0</LoggingVersion>
 
     <ApplicationTitle>CameraView Test</ApplicationTitle>
     <ApplicationId>it.polecola.cameraview.testapp</ApplicationId>
@@ -23,7 +26,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="9.0.5" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="$(LoggingVersion)" />
   </ItemGroup>
 
   <ItemGroup>

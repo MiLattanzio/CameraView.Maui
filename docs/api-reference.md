@@ -13,8 +13,10 @@ A MAUI `View` that displays the native camera preview and emits JPEG frames.
 | `Camera` | `CameraOptions` | `Rear` | Selects the front or rear camera. Changing it restarts capture. |
 | `Orientation` | `CameraOrientation` | `Landscape` | Selects portrait or landscape frame orientation. Changing it restarts capture. |
 | `Enabled` | `bool` | `true` | Controls whether the camera session should be active. |
+| `State` | `CameraState` | `Stopped` | Read-only current lifecycle state of the native camera session. |
+| `IsRunning` | `bool` | `false` | Read-only convenience value equivalent to `State == CameraState.Running`. |
 
-### Event
+### Events
 
 `OnFrameResult` receives a `CameraResult` for each encoded frame.
 
@@ -29,6 +31,18 @@ CameraPreview.OnFrameResult += result =>
 ```
 
 The event is raised on the platform capture queue, not necessarily the UI thread.
+
+`StateChanged` reports transitions together with the previous state and selected camera. `ErrorOccurred` reports a structured `CameraErrorEventArgs`. Both events are dispatched through the MAUI dispatcher and may update UI controls directly.
+
+```csharp
+CameraPreview.StateChanged += (_, args) =>
+    StateLabel.Text = args.State.ToString();
+
+CameraPreview.ErrorOccurred += (_, args) =>
+    ErrorLabel.Text = $"{args.Code}: {args.Message}";
+```
+
+Exceptions thrown by a frame, state, or error subscriber are caught and written to the debug output so one consumer cannot terminate native capture or prevent other subscribers from running.
 
 ### Methods
 
@@ -57,6 +71,50 @@ The event is raised on the platform capture queue, not necessarily the UI thread
 
 - `Portrait`
 - `Landscape`
+
+## CameraState
+
+| Value | Meaning |
+| --- | --- |
+| `Stopped` | Capture is explicitly disabled or the handler is disconnected. |
+| `Starting` | Permission and native session startup are in progress. |
+| `Running` | The native capture session has been configured and started. |
+| `Suspended` | The view/window is inactive or the native session is temporarily interrupted. |
+| `PermissionDenied` | The operating system did not grant camera access. |
+| `Failed` | Native startup or capture failed. See `ErrorOccurred`. |
+
+## CameraErrorCode
+
+- `Unknown`
+- `PermissionDenied`
+- `CameraUnavailable`
+- `CameraInUse`
+- `SessionConfigurationFailed`
+- `DeviceDisconnected`
+- `CaptureFailed`
+
+These values are platform-independent and stable. Platform-specific diagnostics are available separately through `CameraErrorEventArgs.PlatformCode`.
+
+## CameraStateChangedEventArgs
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `PreviousState` | `CameraState` | State before the transition. |
+| `State` | `CameraState` | New camera state. |
+| `Camera` | `CameraOptions` | Camera selected when the transition was emitted. |
+
+## CameraErrorEventArgs
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `Code` | `CameraErrorCode` | Stable cross-platform category. |
+| `Message` | `string` | User-diagnostic description. |
+| `Camera` | `CameraOptions` | Camera selected when the error occurred. |
+| `IsRecoverable` | `bool` | Whether retrying after correcting the condition can reasonably succeed. |
+| `PlatformCode` | `string` | Native code or condition name when available; otherwise `null`. |
+| `Exception` | `Exception` | Managed/native exception when available; otherwise `null`. |
+
+`IsRecoverable` does not mean the library retries continuously. Applications can retry by correcting the reported condition and toggling `Enabled`, changing `Camera`, or allowing the normal activation lifecycle to restart capture.
 
 ## CameraViewAppBuilderExtensions
 

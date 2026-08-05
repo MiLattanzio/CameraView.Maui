@@ -32,6 +32,9 @@ public sealed class NativeCameraView : FrameLayout
     private Size _previewSize;
     private CameraCharacteristics _cameraCharacteristics;
     private Action<byte[]> _frameCaptured;
+    private Action _captureStarted;
+    private Action _captureSuspended;
+    private Action<CameraFailure> _captureFailed;
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
     private bool _isRunning;
@@ -56,13 +59,25 @@ public sealed class NativeCameraView : FrameLayout
     public void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[]> frameCaptured)
+        Action<byte[]> frameCaptured) =>
+        Start(cameraOption, orientation, frameCaptured, null, null, null);
+
+    internal void Start(
+        CameraOptions cameraOption,
+        CameraOrientation orientation,
+        Action<byte[]> frameCaptured,
+        Action captureStarted,
+        Action captureSuspended,
+        Action<CameraFailure> captureFailed)
     {
         if (_isRunning &&
             _cameraOption == cameraOption &&
             _orientation == orientation)
         {
             _frameCaptured = frameCaptured;
+            _captureStarted = captureStarted;
+            _captureSuspended = captureSuspended;
+            _captureFailed = captureFailed;
             return;
         }
 
@@ -71,40 +86,88 @@ public sealed class NativeCameraView : FrameLayout
         _cameraOption = cameraOption;
         _orientation = orientation;
         _frameCaptured = frameCaptured;
-        _cameraManager = Context.GetSystemService(Context.CameraService) as CameraManager
-            ?? throw new InvalidOperationException("Camera service is not available.");
+        _captureStarted = captureStarted;
+        _captureSuspended = captureSuspended;
+        _captureFailed = captureFailed;
 
-        StartBackgroundThread();
+        try
+        {
+            _cameraManager = Context.GetSystemService(Context.CameraService) as CameraManager
+                ?? throw new CameraPlatformException(new CameraFailure(
+                    CameraErrorCode.CameraUnavailable,
+                    "The Android camera service is unavailable.",
+                    true,
+                    "CameraServiceUnavailable"));
 
-        var cameraId = FindCameraId(cameraOption);
-        _cameraCharacteristics = _cameraManager.GetCameraCharacteristics(cameraId);
-        var configurationMap = _cameraCharacteristics.Get(
-            CameraCharacteristics.ScalerStreamConfigurationMap) as StreamConfigurationMap
-            ?? throw new InvalidOperationException("Camera stream configuration is not available.");
+            StartBackgroundThread();
 
-        _previewSize = SelectOutputSize(
-            configurationMap.GetOutputSizes(Class.FromType(typeof(SurfaceTexture))));
-        var captureSize = SelectOutputSize(
-            configurationMap.GetOutputSizes((int)ImageFormatType.Jpeg));
+            var cameraId = FindCameraId(cameraOption);
+            _cameraCharacteristics = _cameraManager.GetCameraCharacteristics(cameraId);
+            var configurationMap = _cameraCharacteristics.Get(
+                CameraCharacteristics.ScalerStreamConfigurationMap) as StreamConfigurationMap
+                ?? throw new CameraPlatformException(new CameraFailure(
+                    CameraErrorCode.SessionConfigurationFailed,
+                    "Camera stream configuration is unavailable.",
+                    true,
+                    "MissingStreamConfiguration"));
 
-        _imageReader = ImageReader.NewInstance(
-            captureSize.Width,
-            captureSize.Height,
-            ImageFormatType.Jpeg,
-            2);
-        _imageReader.SetOnImageAvailableListener(_imageAvailableListener, _backgroundHandler);
+            _previewSize = SelectOutputSize(
+                configurationMap.GetOutputSizes(Class.FromType(typeof(SurfaceTexture))));
+            var captureSize = SelectOutputSize(
+                configurationMap.GetOutputSizes((int)ImageFormatType.Jpeg));
 
-        _isRunning = true;
-        if (_textureView.IsAvailable)
-            ConfigureTransform(_textureView.Width, _textureView.Height);
+            _imageReader = ImageReader.NewInstance(
+                captureSize.Width,
+                captureSize.Height,
+                ImageFormatType.Jpeg,
+                2);
+            _imageReader.SetOnImageAvailableListener(_imageAvailableListener, _backgroundHandler);
 
-        _cameraManager.OpenCamera(cameraId, _cameraStateListener, _backgroundHandler);
+            _isRunning = true;
+            if (_textureView.IsAvailable)
+                ConfigureTransform(_textureView.Width, _textureView.Height);
+
+            _cameraManager.OpenCamera(cameraId, _cameraStateListener, _backgroundHandler);
+        }
+        catch (CameraPlatformException)
+        {
+            Stop();
+            throw;
+        }
+        catch (SecurityException exception)
+        {
+            Stop();
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.PermissionDenied,
+                "Android denied access to the camera.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
+        catch (CameraAccessException exception)
+        {
+            Stop();
+            throw new CameraPlatformException(MapCameraAccessException(exception));
+        }
+        catch (System.Exception exception)
+        {
+            Stop();
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.Unknown,
+                "Android could not start the camera.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
     }
 
     public void Stop()
     {
         _isRunning = false;
         _frameCaptured = null;
+        _captureStarted = null;
+        _captureSuspended = null;
+        _captureFailed = null;
 
         if (_previewSession is not null)
         {
@@ -168,17 +231,29 @@ public sealed class NativeCameraView : FrameLayout
                 return cameraId;
         }
 
-        throw new InvalidOperationException($"No {cameraOption} camera was found.");
+        throw new CameraPlatformException(new CameraFailure(
+            CameraErrorCode.CameraUnavailable,
+            $"No {cameraOption} camera was found.",
+            false,
+            "CameraNotFound"));
     }
 
     private static Size SelectOutputSize(IEnumerable<Size> sizes)
     {
         if (sizes is null)
-            throw new InvalidOperationException("The camera exposes no compatible output sizes.");
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                "The camera exposes no compatible output sizes.",
+                false,
+                "NoOutputSizes"));
 
         var availableSizes = sizes.ToArray();
         if (availableSizes.Length == 0)
-            throw new InvalidOperationException("The camera exposes no compatible output sizes.");
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                "The camera exposes no compatible output sizes.",
+                false,
+                "NoOutputSizes"));
 
         return availableSizes
                    .Where(size => size.Width <= 1280 && size.Height <= 1280)
@@ -252,12 +327,14 @@ public sealed class NativeCameraView : FrameLayout
                 _previewBuilder.Build(),
                 null,
                 _backgroundHandler);
+            _captureStarted?.Invoke();
         }
-        catch (CameraAccessException)
+        catch (CameraAccessException exception)
         {
             _previewSession.Close();
             _previewSession.Dispose();
             _previewSession = null;
+            ReportFailure(MapCameraAccessException(exception));
         }
     }
 
@@ -266,6 +343,11 @@ public sealed class NativeCameraView : FrameLayout
         DisposeSessionConfiguration();
         session.Close();
         session.Dispose();
+        ReportFailure(new CameraFailure(
+            CameraErrorCode.SessionConfigurationFailed,
+            "Android could not configure the camera capture session.",
+            true,
+            "CaptureSessionConfigurationFailed"));
     }
 
     private void OnCameraOpened(CameraDevice cameraDevice)
@@ -290,6 +372,22 @@ public sealed class NativeCameraView : FrameLayout
             _cameraDevice = null;
     }
 
+    private void OnCameraDisconnected(CameraDevice cameraDevice)
+    {
+        OnCameraClosed(cameraDevice);
+        ReportFailure(new CameraFailure(
+            CameraErrorCode.DeviceDisconnected,
+            "The Android camera was disconnected.",
+            true,
+            "CameraDisconnected"));
+    }
+
+    private void OnCameraError(CameraDevice cameraDevice, CameraError error)
+    {
+        OnCameraClosed(cameraDevice);
+        ReportFailure(MapCameraError(error));
+    }
+
     private void OnImageAvailable(ImageReader reader)
     {
         global::Android.Media.Image image = null;
@@ -307,6 +405,15 @@ public sealed class NativeCameraView : FrameLayout
         catch (IllegalStateException)
         {
             // The reader can be closed while a final callback is still queued.
+        }
+        catch (System.Exception exception)
+        {
+            ReportFailure(new CameraFailure(
+                CameraErrorCode.CaptureFailed,
+                "Android could not deliver a camera frame.",
+                true,
+                exception.GetType().Name,
+                exception));
         }
         finally
         {
@@ -427,6 +534,63 @@ public sealed class NativeCameraView : FrameLayout
 
     }
 
+    private void ReportFailure(CameraFailure failure) =>
+        _captureFailed?.Invoke(failure);
+
+    private static CameraFailure MapCameraAccessException(CameraAccessException exception) =>
+        (int)exception.Reason switch
+        {
+            1 => new CameraFailure(
+                CameraErrorCode.PermissionDenied,
+                "Camera access is disabled by Android policy.",
+                false,
+                exception.Reason.ToString(),
+                exception),
+            2 => new CameraFailure(
+                CameraErrorCode.DeviceDisconnected,
+                "The Android camera is disconnected.",
+                true,
+                exception.Reason.ToString(),
+                exception),
+            4 or 5 => new CameraFailure(
+                CameraErrorCode.CameraInUse,
+                "The Android camera is already in use.",
+                true,
+                exception.Reason.ToString(),
+                exception),
+            _ => new CameraFailure(
+                CameraErrorCode.CameraUnavailable,
+                "Android could not access the camera.",
+                true,
+                exception.Reason.ToString(),
+                exception)
+        };
+
+    private static CameraFailure MapCameraError(CameraError error) =>
+        (int)error switch
+        {
+            1 or 2 => new CameraFailure(
+                CameraErrorCode.CameraInUse,
+                "The Android camera is already in use.",
+                true,
+                error.ToString()),
+            3 => new CameraFailure(
+                CameraErrorCode.PermissionDenied,
+                "Camera access is disabled by Android policy.",
+                false,
+                error.ToString()),
+            4 => new CameraFailure(
+                CameraErrorCode.CameraUnavailable,
+                "The Android camera device reported a fatal error.",
+                true,
+                error.ToString()),
+            _ => new CameraFailure(
+                CameraErrorCode.CameraUnavailable,
+                "The Android camera service reported a fatal error.",
+                true,
+                error.ToString())
+        };
+
     private sealed class CameraSurfaceTextureListener(NativeCameraView owner)
         : Java.Lang.Object, TextureView.ISurfaceTextureListener
     {
@@ -450,9 +614,9 @@ public sealed class NativeCameraView : FrameLayout
     {
         public override void OnOpened(CameraDevice camera) => owner.OnCameraOpened(camera);
 
-        public override void OnDisconnected(CameraDevice camera) => owner.OnCameraClosed(camera);
+        public override void OnDisconnected(CameraDevice camera) => owner.OnCameraDisconnected(camera);
 
-        public override void OnError(CameraDevice camera, CameraError error) => owner.OnCameraClosed(camera);
+        public override void OnError(CameraDevice camera, CameraError error) => owner.OnCameraError(camera, error);
     }
 
     private sealed class CameraCaptureStateListener(NativeCameraView owner)

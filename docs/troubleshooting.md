@@ -1,5 +1,22 @@
 # Troubleshooting
 
+## Start with the observable state
+
+Version 1.1.0 and later expose `StateChanged` and `ErrorOccurred`. Log both before collecting the full platform trace:
+
+```csharp
+CameraPreview.StateChanged += (_, args) =>
+    System.Diagnostics.Debug.WriteLine(
+        $"Camera {args.PreviousState} -> {args.State} ({args.Camera})");
+
+CameraPreview.ErrorOccurred += (_, args) =>
+    System.Diagnostics.Debug.WriteLine(
+        $"Camera error {args.Code}; native={args.PlatformCode}; " +
+        $"recoverable={args.IsRecoverable}; {args.Message}; {args.Exception}");
+```
+
+`PermissionDenied` requires a permission/settings change. `CameraInUse` means another session must release the camera. `CameraUnavailable`, `DeviceDisconnected`, and `SessionConfigurationFailed` usually require a lifecycle retry, camera switch, or device-level investigation. `CaptureFailed` identifies a failure after the session started.
+
 ## The preview is black
 
 Check the following:

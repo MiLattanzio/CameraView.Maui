@@ -18,8 +18,8 @@ Public member names shown below are provisional until their implementation is re
 | Version | Theme | Status |
 | --- | --- | --- |
 | 1.0.1 | Reliability and packaging hardening | Released 2026-08-06 |
-| 1.1.0 | .NET 10 and camera diagnostics | Next |
-| 1.2.0 | Capture configuration and frame metadata | Planned |
+| 1.1.0 | .NET 10 and camera diagnostics | Released 2026-08-06 |
+| 1.2.0 | Capture configuration and frame metadata | Next |
 | 1.3.0 | Interactive camera controls | Planned |
 | 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |
@@ -46,7 +46,7 @@ Exit criteria:
 
 The first minor release makes failures observable and moves consumers toward the current LTS toolchain without abandoning .NET 9 applications.
 
-Planned scope:
+Delivered scope:
 
 - Add .NET 10 Android and iOS targets while retaining the .NET 9 targets in the same package.
 - Add a camera state model such as `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, and `Failed`.

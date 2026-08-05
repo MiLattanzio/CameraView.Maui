@@ -2,6 +2,8 @@
 
 ## Android
 
+CameraView.Maui supports both `net9.0-android` and `net10.0-android` consumers.
+
 ### Requirements
 
 - Android API 28 or later.
@@ -21,6 +23,8 @@ The feature is optional so an application can still be installed on devices with
 The control requests the runtime camera permission before opening Camera2. A denied permission leaves the preview stopped.
 
 ## iOS
+
+CameraView.Maui supports both `net9.0-ios` and `net10.0-ios` consumers.
 
 ### Requirements
 
@@ -46,3 +50,5 @@ On both platforms the control:
 4. Restarts only when the view remains loaded and `Enabled` is `true`.
 
 This behavior covers normal backgrounding and screen lock/unlock. Applications should still set `Enabled` to `false` when navigating away from a camera page if that page remains loaded.
+
+The observable state is `Suspended` while the view or window is inactive. A successful native restart transitions through `Starting` to `Running`; the control never reports `Running` merely because a restart was requested.

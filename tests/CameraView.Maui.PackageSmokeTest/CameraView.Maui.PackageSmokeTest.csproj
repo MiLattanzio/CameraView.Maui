@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net9.0-android;net9.0-ios</TargetFrameworks>
+    <TargetFrameworks>net9.0-android;net9.0-ios;net10.0-android;net10.0-ios</TargetFrameworks>
     <OutputType>Library</OutputType>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
@@ -8,7 +8,8 @@
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <MauiVersion>9.0.120</MauiVersion>
-    <CameraViewPackageVersion Condition="'$(CameraViewPackageVersion)' == ''">1.0.0</CameraViewPackageVersion>
+    <MauiVersion Condition="'$(TargetFramework)' == 'net10.0-android' Or '$(TargetFramework)' == 'net10.0-ios'">10.0.90</MauiVersion>
+    <CameraViewPackageVersion Condition="'$(CameraViewPackageVersion)' == ''">1.0.1</CameraViewPackageVersion>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
