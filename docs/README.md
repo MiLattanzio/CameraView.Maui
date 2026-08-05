@@ -9,6 +9,7 @@ This directory contains the user, contributor, and maintainer documentation for 
 - [API reference](api-reference.md)
 - [Architecture and lifecycle](architecture.md)
 - [Troubleshooting](troubleshooting.md)
+- [Roadmap](ROADMAP.md)
 - [Changelog](CHANGELOG.md)
 
 ## Contributors and maintainers

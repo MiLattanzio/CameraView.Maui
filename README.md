@@ -295,6 +295,7 @@ The control also releases the native camera when the MAUI window is deactivated 
 - [API reference](docs/api-reference.md)
 - [Architecture and lifecycle](docs/architecture.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Roadmap](docs/ROADMAP.md)
 - [Changelog](docs/CHANGELOG.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Release and Trusted Publishing](docs/releasing.md)

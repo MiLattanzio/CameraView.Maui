@@ -6,6 +6,10 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Added
+
+- A versioned roadmap for the planned 1.x releases and the 2.0 frame-pipeline redesign.
+
 ## [1.0.0] - 2026-08-05
 
 ### Added
