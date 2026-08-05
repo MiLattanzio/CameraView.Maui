@@ -82,7 +82,7 @@ jobs:
 
       - name: Restore MAUI workloads
         run: >-
-          dotnet workload restore CameraView.Maui.sln
+          dotnet workload restore CameraView.Maui/CameraView.Maui.csproj
           --skip-manifest-update
 
       - name: Show toolchain
@@ -92,11 +92,11 @@ jobs:
           xcode-select --print-path
 
       - name: Restore
-        run: dotnet restore CameraView.Maui.sln
+        run: dotnet restore CameraView.Maui/CameraView.Maui.csproj
 
       - name: Build
         run: >-
-          dotnet build CameraView.Maui.sln
+          dotnet build CameraView.Maui/CameraView.Maui.csproj
           --configuration Release
           --no-restore
           --nologo
