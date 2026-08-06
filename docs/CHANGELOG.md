@@ -6,6 +6,10 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Fixed
+
+- NuGet publishing now also starts when a GitHub release is published, including releases whose tag is created by GitHub.
+
 ## [1.2.0] - 2026-08-06
 
 ### Added

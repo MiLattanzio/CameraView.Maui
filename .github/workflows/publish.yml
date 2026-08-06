@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*.*.*"
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       version:
@@ -43,6 +46,7 @@ jobs:
         shell: bash
         env:
           MANUAL_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             if [[ "$GITHUB_REF" != "refs/heads/master" ]]; then
@@ -50,6 +54,14 @@ jobs:
               exit 1
             fi
             version="$MANUAL_VERSION"
+          elif [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            tag="$RELEASE_TAG"
+            version="${tag#v}"
+            release_sha="$(git rev-list -n 1 "$tag")"
+            if ! git merge-base --is-ancestor "$release_sha" "origin/master"; then
+              echo "The published release tag must point to a commit contained in master." >&2
+              exit 1
+            fi
           else
             version="${GITHUB_REF_NAME#v}"
             if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/master"; then
