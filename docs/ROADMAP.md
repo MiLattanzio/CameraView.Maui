@@ -19,7 +19,7 @@ Public member names shown below are provisional until their implementation is re
 | --- | --- | --- |
 | 1.0.1 | Reliability and packaging hardening | Released 2026-08-06 |
 | 1.1.0 | .NET 10 and camera diagnostics | Released 2026-08-06 |
-| 1.2.0 | Capture configuration and frame metadata | Next |
+| 1.2.0 | Capture configuration and frame metadata | Released 2026-08-06 |
 | 1.3.0 | Interactive camera controls | Planned |
 | 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |

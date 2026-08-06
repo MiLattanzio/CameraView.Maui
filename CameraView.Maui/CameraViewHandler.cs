@@ -16,7 +16,11 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
         {
             [nameof(CameraView.Camera)] = MapConfiguration,
             [nameof(CameraView.Orientation)] = MapConfiguration,
-            [nameof(CameraView.Enabled)] = MapConfiguration
+            [nameof(CameraView.Enabled)] = MapConfiguration,
+            [nameof(CameraView.Resolution)] = MapConfiguration,
+            [nameof(CameraView.JpegQuality)] = MapConfiguration,
+            [nameof(CameraView.MaximumFrameRate)] = MapConfiguration,
+            [nameof(CameraView.MinimumFrameInterval)] = MapConfiguration
         };
 
     public CameraViewHandler() : base(Mapper)
@@ -170,6 +174,11 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
                 cameraView.Camera,
                 cameraView.Orientation,
                 cameraView.SetResult,
+                cameraView.Resolution,
+                cameraView.JpegQuality,
+                cameraView.MaximumFrameRate,
+                cameraView.MinimumFrameInterval,
+                configuration => Dispatch(cameraView, () => cameraView.SetEffectiveConfiguration(configuration)),
                 () => DispatchState(
                     platformView,
                     cameraView,

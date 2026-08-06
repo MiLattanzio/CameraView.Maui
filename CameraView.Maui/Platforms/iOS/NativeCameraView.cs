@@ -16,7 +16,8 @@ public sealed class NativeCameraView : UIView
     private AVCaptureVideoPreviewLayer _previewLayer;
     private AVCaptureVideoDataOutput _videoOutput;
     private VideoCaptureDelegate _captureDelegate;
-    private Action<byte[]> _frameCaptured;
+    private Action<byte[], int, int> _frameCaptured;
+    private Action<CameraCaptureConfiguration> _configurationSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
     private Action<CameraFailure> _captureFailed;
@@ -26,6 +27,8 @@ public sealed class NativeCameraView : UIView
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
     private bool _isRunning;
+    private int _jpegQuality;
+    private TimeSpan _minimumFrameInterval;
 
     public override void LayoutSubviews()
     {
@@ -38,12 +41,17 @@ public sealed class NativeCameraView : UIView
         CameraOptions cameraOption,
         CameraOrientation orientation,
         Action<byte[]> frameCaptured) =>
-        Start(cameraOption, orientation, frameCaptured, null, null, null);
+        Start(cameraOption, orientation, (bytes, _, _) => frameCaptured(bytes), CameraResolution.Default, 85, 0, TimeSpan.Zero, null, null, null, null);
 
     internal void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[]> frameCaptured,
+        Action<byte[], int, int> frameCaptured,
+        CameraResolution resolution,
+        int jpegQuality,
+        int maximumFrameRate,
+        TimeSpan minimumFrameInterval,
+        Action<CameraCaptureConfiguration> configurationSelected,
         Action captureStarted,
         Action captureSuspended,
         Action<CameraFailure> captureFailed)
@@ -56,6 +64,7 @@ public sealed class NativeCameraView : UIView
             _captureStarted = captureStarted;
             _captureSuspended = captureSuspended;
             _captureFailed = captureFailed;
+            _configurationSelected = configurationSelected;
             return;
         }
 
@@ -67,13 +76,15 @@ public sealed class NativeCameraView : UIView
         _captureStarted = captureStarted;
         _captureSuspended = captureSuspended;
         _captureFailed = captureFailed;
+        _configurationSelected = configurationSelected;
+        _jpegQuality = jpegQuality;
+        _minimumFrameInterval = maximumFrameRate > 0
+            ? TimeSpan.FromSeconds(1d / maximumFrameRate)
+            : minimumFrameInterval;
 
         try
         {
-            _captureSession = new AVCaptureSession
-            {
-                SessionPreset = AVCaptureSession.Preset1280x720
-            };
+            _captureSession = new AVCaptureSession { SessionPreset = GetSessionPreset(resolution) };
 
             _captureSession.BeginConfiguration();
             try
@@ -83,8 +94,17 @@ public sealed class NativeCameraView : UIView
             }
             finally
             {
-                _captureSession.CommitConfiguration();
+            _captureSession.CommitConfiguration();
             }
+
+            var dimensions = resolution switch
+            {
+                CameraResolution.Qvga => new CoreMedia.CMVideoDimensions(352, 288),
+                CameraResolution.Vga => new CoreMedia.CMVideoDimensions(640, 480),
+                CameraResolution.Hd1080p => new CoreMedia.CMVideoDimensions(1920, 1080),
+                _ => new CoreMedia.CMVideoDimensions(1280, 720)
+            };
+            _configurationSelected?.Invoke(new CameraCaptureConfiguration(dimensions.Width, dimensions.Height, jpegQuality, maximumFrameRate, minimumFrameInterval));
 
             _previewLayer = new AVCaptureVideoPreviewLayer(_captureSession)
             {
@@ -132,6 +152,7 @@ public sealed class NativeCameraView : UIView
         _captureStarted = null;
         _captureSuspended = null;
         _captureFailed = null;
+        _configurationSelected = null;
 
         DisposeSessionObservers();
 
@@ -217,7 +238,15 @@ public sealed class NativeCameraView : UIView
 
     private void ConfigureOutput()
     {
-        _captureDelegate = new VideoCaptureDelegate(EmitFrame, ReportFailure);
+        _captureDelegate = new VideoCaptureDelegate(
+            (bytes, width, height) =>
+            {
+                if (_isRunning)
+                    _frameCaptured?.Invoke(bytes, width, height);
+            },
+            ReportFailure,
+            () => _minimumFrameInterval,
+            () => _jpegQuality);
         _videoOutput = new AVCaptureVideoDataOutput
         {
             AlwaysDiscardsLateVideoFrames = true
@@ -268,11 +297,13 @@ public sealed class NativeCameraView : UIView
         }
     }
 
-    private void EmitFrame(byte[] bytes)
+    private static NSString GetSessionPreset(CameraResolution resolution) => resolution switch
     {
-        if (_isRunning)
-            _frameCaptured?.Invoke(bytes);
-    }
+        CameraResolution.Qvga => AVCaptureSession.Preset352x288,
+        CameraResolution.Vga => AVCaptureSession.Preset640x480,
+        CameraResolution.Hd1080p => AVCaptureSession.Preset1920x1080,
+        _ => AVCaptureSession.Preset1280x720
+    };
 
     private void ObserveSession()
     {
@@ -380,8 +411,10 @@ public sealed class NativeCameraView : UIView
     }
 
     private sealed class VideoCaptureDelegate(
-        Action<byte[]> frameCaptured,
-        Action<CameraFailure> captureFailed)
+        Action<byte[], int, int> frameCaptured,
+        Action<CameraFailure> captureFailed,
+        Func<TimeSpan> minimumFrameInterval,
+        Func<int> jpegQuality)
         : AVCaptureVideoDataOutputSampleBufferDelegate
     {
         private readonly CIContext _imageContext = CIContext.FromOptions(null);
@@ -393,19 +426,29 @@ public sealed class NativeCameraView : UIView
         {
             try
             {
+                if (minimumFrameInterval() > TimeSpan.Zero)
+                {
+                    var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var elapsed = (now - Interlocked.Read(ref _lastFrameTicks)) / (double)System.Diagnostics.Stopwatch.Frequency;
+                    if (elapsed < minimumFrameInterval().TotalSeconds) return;
+                    Interlocked.Exchange(ref _lastFrameTicks, now);
+                }
                 using var imageBuffer = sampleBuffer.GetImageBuffer();
                 if (imageBuffer is null)
                     return;
 
+                var pixelBuffer = imageBuffer as CVPixelBuffer;
+                var width = pixelBuffer?.Width ?? 0;
+                var height = pixelBuffer?.Height ?? 0;
                 using var image = new CIImage(imageBuffer);
                 using var cgImage = _imageContext.CreateCGImage(image, image.Extent);
                 if (cgImage is null)
                     return;
 
                 using var uiImage = new UIImage(cgImage);
-                using var imageData = uiImage.AsJPEG(0.85f);
+                using var imageData = uiImage.AsJPEG(Math.Clamp(jpegQuality() / 100f, 0.01f, 1f));
                 if (imageData is not null)
-                    frameCaptured(imageData.ToArray());
+                    frameCaptured(imageData.ToArray(), (int)width, (int)height);
             }
             catch (System.Exception exception)
             {
@@ -421,6 +464,8 @@ public sealed class NativeCameraView : UIView
                 sampleBuffer.Dispose();
             }
         }
+
+        private long _lastFrameTicks;
 
         protected override void Dispose(bool disposing)
         {

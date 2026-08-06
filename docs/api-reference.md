@@ -15,6 +15,11 @@ A MAUI `View` that displays the native camera preview and emits JPEG frames.
 | `Enabled` | `bool` | `true` | Controls whether the camera session should be active. |
 | `State` | `CameraState` | `Stopped` | Read-only current lifecycle state of the native camera session. |
 | `IsRunning` | `bool` | `false` | Read-only convenience value equivalent to `State == CameraState.Running`. |
+| `Resolution` | `CameraResolution` | `Default` | Preferred encoded-frame resolution preset. Unsupported requests use the closest available native size. |
+| `JpegQuality` | `int` | `85` | JPEG quality from 1 to 100. The default preserves the previous behavior. |
+| `MaximumFrameRate` | `int` | `0` | Maximum delivered frame rate; zero means no explicit limit. |
+| `MinimumFrameInterval` | `TimeSpan` | `Zero` | Minimum time between delivered frames. `MaximumFrameRate` takes precedence when both are set. |
+| `EffectiveConfiguration` | `CameraCaptureConfiguration` | `null` | Read-only configuration selected by the native camera after startup. |
 
 ### Events
 
@@ -59,6 +64,23 @@ Exceptions thrown by a frame, state, or error subscriber are caught and written 
 | --- | --- | --- |
 | `Success` | `bool` | Indicates whether an image is available. |
 | `Image` | `byte[]` | JPEG bytes for a successful result; no image is assigned to a cancelled result. |
+| `Width`, `Height` | `int` | Encoded frame dimensions reported by the native pipeline. |
+| `Timestamp` | `DateTimeOffset` | UTC timestamp captured when the frame is delivered. |
+| `Orientation` | `CameraOrientation` | Orientation requested for the encoded frame. |
+| `Camera` | `CameraOptions` | Camera that produced the frame. |
+| `SequenceNumber` | `long` | Monotonically increasing number for successful results from this control instance. |
+
+## CameraCaptureConfiguration
+
+Reports the effective native output after negotiation. `Width` and `Height` are the selected encoded dimensions; `JpegQuality`, `MaximumFrameRate`, and `MinimumFrameInterval` report the active requested limits.
+
+## CameraResolution
+
+- `Default` (the 1.0 720p-or-lower behavior)
+- `Qvga`
+- `Vga`
+- `Hd720p`
+- `Hd1080p`
 
 `new CameraResult()` creates an unsuccessful result. `new CameraResult(byte[])` creates a successful result and rejects a null array.
 

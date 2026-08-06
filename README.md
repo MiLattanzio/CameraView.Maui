@@ -15,6 +15,7 @@ CameraView.Maui is a reusable .NET MAUI camera preview control for Android and i
 - Runtime permission requests.
 - Automatic camera release and restart across app deactivation, screen lock, and resume.
 - Observable camera state and structured cross-platform errors.
+- Configurable resolution, JPEG quality, frame throttling, and effective capture metadata.
 - .NET 9 and .NET 10 MAUI targets in the same package.
 
 ## Requirements
@@ -70,9 +71,20 @@ private void OnFrameResult(CameraResult result)
 
     byte[] jpeg = result.Image;
     System.Diagnostics.Debug.WriteLine(
-        $"JPEG frame: {jpeg.Length:N0} bytes");
+        $"JPEG frame: {result.Width}x{result.Height}, " +
+        $"sequence {result.SequenceNumber}, {jpeg.Length:N0} bytes");
 }
 ```
+
+Configure capture before enabling the view. Changes restart the native session safely and are reapplied after resume:
+
+```csharp
+CameraPreview.Resolution = CameraResolution.Hd720p;
+CameraPreview.JpegQuality = 80;
+CameraPreview.MaximumFrameRate = 15;
+```
+
+`Resolution` is a preference: unsupported presets are negotiated to the closest native size. `MaximumFrameRate` takes precedence over `MinimumFrameInterval`. The default values preserve the 1.0 behavior.
 
 Subscribe and unsubscribe with the page lifecycle:
 

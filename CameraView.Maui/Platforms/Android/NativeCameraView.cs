@@ -31,13 +31,17 @@ public sealed class NativeCameraView : FrameLayout
     private List<OutputConfiguration> _outputConfigurations;
     private Size _previewSize;
     private CameraCharacteristics _cameraCharacteristics;
-    private Action<byte[]> _frameCaptured;
+    private Action<byte[], int, int> _frameCaptured;
+    private Action<CameraCaptureConfiguration> _configurationSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
     private Action<CameraFailure> _captureFailed;
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
     private bool _isRunning;
+    private int _jpegQuality;
+    private TimeSpan _minimumFrameInterval;
+    private long _lastFrameTicks;
 
     public NativeCameraView(Context context) : base(context)
     {
@@ -60,12 +64,17 @@ public sealed class NativeCameraView : FrameLayout
         CameraOptions cameraOption,
         CameraOrientation orientation,
         Action<byte[]> frameCaptured) =>
-        Start(cameraOption, orientation, frameCaptured, null, null, null);
+        Start(cameraOption, orientation, (bytes, _, _) => frameCaptured(bytes), CameraResolution.Default, 85, 0, TimeSpan.Zero, null, null, null, null);
 
     internal void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[]> frameCaptured,
+        Action<byte[], int, int> frameCaptured,
+        CameraResolution resolution,
+        int jpegQuality,
+        int maximumFrameRate,
+        TimeSpan minimumFrameInterval,
+        Action<CameraCaptureConfiguration> configurationSelected,
         Action captureStarted,
         Action captureSuspended,
         Action<CameraFailure> captureFailed)
@@ -78,6 +87,7 @@ public sealed class NativeCameraView : FrameLayout
             _captureStarted = captureStarted;
             _captureSuspended = captureSuspended;
             _captureFailed = captureFailed;
+            _configurationSelected = configurationSelected;
             return;
         }
 
@@ -89,6 +99,11 @@ public sealed class NativeCameraView : FrameLayout
         _captureStarted = captureStarted;
         _captureSuspended = captureSuspended;
         _captureFailed = captureFailed;
+        _configurationSelected = configurationSelected;
+        _jpegQuality = jpegQuality;
+        _minimumFrameInterval = maximumFrameRate > 0
+            ? TimeSpan.FromSeconds(1d / maximumFrameRate)
+            : minimumFrameInterval;
 
         try
         {
@@ -111,10 +126,10 @@ public sealed class NativeCameraView : FrameLayout
                     true,
                     "MissingStreamConfiguration"));
 
-            _previewSize = SelectOutputSize(
-                configurationMap.GetOutputSizes(Class.FromType(typeof(SurfaceTexture))));
-            var captureSize = SelectOutputSize(
-                configurationMap.GetOutputSizes((int)ImageFormatType.Jpeg));
+            _previewSize = SelectOutputSize(configurationMap.GetOutputSizes(Class.FromType(typeof(SurfaceTexture))), resolution);
+            var captureSize = SelectOutputSize(configurationMap.GetOutputSizes((int)ImageFormatType.Jpeg), resolution);
+            _configurationSelected?.Invoke(new CameraCaptureConfiguration(
+                captureSize.Width, captureSize.Height, jpegQuality, maximumFrameRate, minimumFrameInterval));
 
             _imageReader = ImageReader.NewInstance(
                 captureSize.Width,
@@ -168,6 +183,7 @@ public sealed class NativeCameraView : FrameLayout
         _captureStarted = null;
         _captureSuspended = null;
         _captureFailed = null;
+        _configurationSelected = null;
 
         if (_previewSession is not null)
         {
@@ -238,7 +254,7 @@ public sealed class NativeCameraView : FrameLayout
             "CameraNotFound"));
     }
 
-    private static Size SelectOutputSize(IEnumerable<Size> sizes)
+    private static Size SelectOutputSize(IEnumerable<Size> sizes, CameraResolution resolution = CameraResolution.Default)
     {
         if (sizes is null)
             throw new CameraPlatformException(new CameraFailure(
@@ -255,11 +271,24 @@ public sealed class NativeCameraView : FrameLayout
                 false,
                 "NoOutputSizes"));
 
+        var requested = resolution switch
+        {
+            CameraResolution.Qvga => 320L * 240,
+            CameraResolution.Vga => 640L * 480,
+            CameraResolution.Hd720p => 1280L * 720,
+            CameraResolution.Hd1080p => 1920L * 1080,
+            _ => 1280L * 720
+        };
         return availableSizes
-                   .Where(size => size.Width <= 1280 && size.Height <= 1280)
-                   .OrderByDescending(GetArea)
+                   .Where(size => resolution == CameraResolution.Default
+                       ? size.Width <= 1280 && size.Height <= 1280
+                       : true)
+                   .OrderBy(size => System.Math.Abs(GetArea(size) - requested))
+                   .ThenByDescending(GetArea)
                    .FirstOrDefault()
-               ?? availableSizes.OrderBy(GetArea).First();
+               ?? availableSizes
+                   .OrderByDescending(GetArea)
+                   .First();
     }
 
     private static long GetArea(Size size) => (long)size.Width * size.Height;
@@ -291,10 +320,9 @@ public sealed class NativeCameraView : FrameLayout
         _previewBuilder.AddTarget(_imageReader.Surface);
 
         // Camera2's Key API requires boxed Java integers on every supported API level.
-#pragma warning disable CA1422
         _previewBuilder.Set(CaptureRequest.ControlMode, new Integer((int)ControlMode.Auto));
         _previewBuilder.Set(CaptureRequest.JpegOrientation, new Integer(GetJpegOrientation()));
-#pragma warning restore CA1422
+        _previewBuilder.Set(CaptureRequest.JpegQuality, new Integer(_jpegQuality));
 
         _outputConfigurations =
         [
@@ -393,6 +421,13 @@ public sealed class NativeCameraView : FrameLayout
         global::Android.Media.Image image = null;
         try
         {
+            if (_minimumFrameInterval > TimeSpan.Zero)
+            {
+                var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                var elapsed = (now - Interlocked.Read(ref _lastFrameTicks)) / (double)System.Diagnostics.Stopwatch.Frequency;
+                if (elapsed < _minimumFrameInterval.TotalSeconds) return;
+                Interlocked.Exchange(ref _lastFrameTicks, now);
+            }
             image = reader.AcquireLatestImage();
             var buffer = image?.GetPlanes()?.FirstOrDefault()?.Buffer;
             if (buffer is null)
@@ -400,7 +435,7 @@ public sealed class NativeCameraView : FrameLayout
 
             var bytes = new byte[buffer.Remaining()];
             buffer.Get(bytes);
-            _frameCaptured?.Invoke(bytes);
+            _frameCaptured?.Invoke(bytes, image.Width, image.Height);
         }
         catch (IllegalStateException)
         {

@@ -6,6 +6,20 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-06
+
+### Added
+
+- Configurable capture resolution presets (`Default`, `Qvga`, `Vga`, `Hd720p`, and `Hd1080p`).
+- Configurable JPEG quality, maximum frame rate, and minimum frame interval.
+- Frame width, height, UTC timestamp, orientation, camera position, and sequence number.
+- `EffectiveConfiguration` reporting the values negotiated by the native camera.
+
+### Changed
+
+- Configuration changes safely restart the native session and are retained across resume.
+- Android uses the latest available image and drops frames before delivery when throttling is enabled; iOS continues to discard late video frames.
+
 ## [1.1.0] - 2026-08-06
 
 ### Added
