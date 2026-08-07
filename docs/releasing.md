@@ -36,22 +36,13 @@ git tag -a v1.2.2 -m "CameraView.Maui 1.2.2"
 git push origin v1.2.2
 ```
 
-The workflow validates that the tag points to a commit contained in `master` and that the tag version matches the project version. It then builds every .NET 9/.NET 10 Android/iOS target, validates API compatibility against the previous stable package, creates and inspects `.nupkg` and `.snupkg` artifacts, builds a clean package consumer, obtains the temporary credential, and publishes both package and symbols.
+5. Create and publish the GitHub release for that tag. A tag push by itself never publishes to NuGet.org.
+
+The workflow starts only for the `release.published` event. It validates that the release tag points to a commit contained in `master` and that the tag version matches the project version. It then builds every .NET 9/.NET 10 Android/iOS target, validates API compatibility against the previous stable package, creates and inspects `.nupkg` and `.snupkg` artifacts, builds a clean package consumer, obtains the temporary credential, and publishes both package and symbols.
 
 Package inspection verifies the NuGet ID and version, license, readme, release-notes URL, repository commit, target assemblies, Portable PDBs, and Source Link mappings before authentication is requested.
 
-NuGet packages are immutable. If a version was already published, fix the issue and release a new version.
-
-## Manual publishing
-
-The workflow can also be started from the GitHub Actions UI:
-
-1. Select `Publish to NuGet.org`.
-2. Run the workflow from `master`.
-3. Enter a SemVer package version without the `v` prefix.
-4. Approve the `nuget.org` environment if reviewers are configured.
-
-Manual publishing is rejected for branches other than `master`.
+NuGet packages are immutable. The publish workflow cannot be started by a branch push, a tag push, or a manual dispatch. If a version was already published, fix the issue and release a new version.
 
 ## Package artifacts
 

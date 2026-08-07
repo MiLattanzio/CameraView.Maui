@@ -25,6 +25,10 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - The sample application can switch between the compatibility JPEG profiles and the realtime raw profile.
 - `CameraCaptureOptions.Default` and `OnFrameResult` retain the 1.2.1 JPEG behavior.
 
+### Fixed
+
+- NuGet Trusted Publishing now runs only when a GitHub release is published, avoiding the duplicate run previously caused by both the release and its tag push.
+
 ## [1.2.1] - 2026-08-07
 
 ### Added
