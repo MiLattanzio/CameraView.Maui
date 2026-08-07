@@ -22,7 +22,7 @@ Public member names shown below are provisional until their implementation is re
 | 1.2.0 | Capture configuration and frame metadata | GitHub release 2026-08-06; not published to NuGet.org |
 | 1.2.1 | Configuration and preview hardening | Released 2026-08-07 |
 | 1.2.2 | High-throughput configurable frame pipeline | Implemented |
-| 1.3.0 | Interactive camera controls | Planned |
+| 1.3.0 | Interactive camera controls | Implemented; iOS device verification pending |
 | 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |
 
@@ -130,14 +130,15 @@ Exit criteria:
 
 This release adds controls required by scanner, document-capture, and assisted-photography experiences.
 
-Planned scope:
+Implementation scope:
 
-- Zoom with reported minimum and maximum factors.
-- Torch control when the selected camera supports it.
-- Tap-to-focus or an explicit normalized focus point.
-- Exposure compensation within the device-supported range.
-- Capability reporting so applications can enable only supported controls.
-- Independent preview mirroring for the front camera while keeping encoded output behavior explicit.
+- Add atomic `CameraControlOptions` that update the active session without a capture restart and survive camera switching or resume.
+- Add zoom with reported native minimum and maximum factors, including Android zoom-ratio/crop fallback.
+- Add torch control that falls back to off when the selected camera has no flash unit.
+- Add continuous or single autofocus with an optional point normalized against the visible preview.
+- Add exposure compensation in EV, clamped and quantized to the device-supported range and step.
+- Report applied values, native ranges, focus modes, focus-point support, and deterministic fallback flags through `EffectiveControls`.
+- Configure preview mirroring independently while preserving the encoded/raw frame behavior reported by `CameraFrame.IsMirrored`.
 
 Exit criteria:
 

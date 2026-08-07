@@ -17,6 +17,8 @@ A MAUI `View` that displays the native camera preview and emits JPEG or raw nati
 | `IsRunning` | `bool` | `false` | Read-only convenience value equivalent to `State == CameraState.Running`. |
 | `CaptureOptions` | `CameraCaptureOptions` | `Default` | Immutable requested resolution, format, native frame rate, delivery policy, JPEG quality, and delivery-rate limits. Replacing it restarts capture once. |
 | `EffectiveConfiguration` | `CameraCaptureConfiguration` | `null` | Read-only capture and preview configuration actually selected after startup. |
+| `ControlOptions` | `CameraControlOptions` | `Default` | Immutable requested zoom, torch, focus, exposure, and preview-mirroring controls. Replacing it updates the active native session without restarting capture. |
+| `EffectiveControls` | `CameraControlState` | `null` | Read-only applied controls and capabilities of the selected camera. |
 
 ### Events
 
@@ -56,6 +58,8 @@ CameraPreview.ErrorOccurred += (_, args) =>
 ```
 
 `EffectiveConfigurationChanged` is also dispatched through the MAUI dispatcher. Its `Configuration` is `null` while a new native session is being negotiated, then contains the selected output once startup succeeds.
+
+`EffectiveControlsChanged` is dispatched through the MAUI dispatcher after controls are applied. Unsupported or out-of-range requests do not stop capture: inspect the effective value and fallback flags. The state is cleared while a new camera is starting, then repopulated with the new camera's capabilities.
 
 Exceptions thrown by a frame, state, or error subscriber are caught and written to the debug output so one consumer cannot terminate native capture or prevent other subscribers from running.
 
@@ -138,6 +142,63 @@ CameraPreview.CaptureOptions = CameraCaptureOptions.Balanced with
     MaximumFrameRate = 12.5
 };
 ```
+
+## CameraControlOptions
+
+`CameraControlOptions` is an immutable record. Replace `CameraView.ControlOptions` with a complete value or a `with` expression. Unlike `CaptureOptions`, control changes are applied to the running Camera2 request or AVFoundation device without rebuilding the capture session.
+
+| Member | Default | Description |
+| --- | --- | --- |
+| `ZoomFactor` | `1` | Positive optical/digital zoom factor. The effective value is clamped to the selected camera's range. Values below 1 are accepted for devices that expose an ultra-wide zoom ratio. |
+| `TorchEnabled` | `false` | Requests continuous torch illumination. It falls back to `false` when the selected camera has no supported torch. |
+| `FocusMode` | `Continuous` | Requests continuous autofocus or a one-shot `Single` autofocus operation. |
+| `FocusPoint` | `null` | Optional `CameraPoint` normalized from `(0,0)` at the preview's top-left to `(1,1)` at its bottom-right. `null` restores the centered/default metering point. |
+| `ExposureCompensation` | `0` | Exposure bias in EV. It is clamped and, where required, quantized to the native step. |
+| `PreviewMirroring` | `Automatic` | Mirrors the front preview and leaves the rear preview unmirrored, or explicitly forces either behavior. It does not change frame buffers. |
+
+```csharp
+CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+{
+    ZoomFactor = 2,
+    TorchEnabled = true,
+    FocusMode = CameraFocusMode.Single,
+    FocusPoint = new CameraPoint(0.35, 0.6),
+    ExposureCompensation = 0.5,
+    PreviewMirroring = CameraPreviewMirroringMode.Automatic
+};
+```
+
+Invalid universal values such as a non-positive/non-finite zoom or non-finite exposure are rejected immediately. Hardware-specific limits use deterministic fallback instead, allowing one options value to survive front/rear switching and lifecycle resume.
+
+## CameraControlState and capabilities
+
+`EffectiveControls` reports the active `ZoomFactor`, `TorchEnabled`, nullable `FocusMode`/`FocusPoint`, `ExposureCompensation`, and `IsPreviewMirrored`. `RequestedOptions` preserves the complete request. `UsedZoomFallback`, `UsedTorchFallback`, `UsedFocusFallback`, and `UsedExposureFallback` identify values the hardware could not apply exactly.
+
+`CameraControlCapabilities` exposes:
+
+- `MinimumZoomFactor`, `MaximumZoomFactor`, and `IsZoomSupported`;
+- `IsTorchSupported`;
+- `IsFocusPointSupported`, `SupportedFocusModes`, and `SupportsFocusMode`;
+- `MinimumExposureCompensation`, `MaximumExposureCompensation`, `ExposureCompensationStep`, and `SupportsExposureCompensation`.
+
+Capability values belong to the currently selected camera and can change after switching between front and rear cameras.
+
+## CameraPoint
+
+An immutable normalized preview coordinate. Both values must be finite and between zero and one. `CameraPoint.Center` is `(0.5, 0.5)`. The native implementation maps the point through the current rotation and preview mirroring before configuring focus and, when available, exposure metering.
+
+## CameraFocusMode
+
+- `Continuous`: keeps native continuous autofocus active, optionally around `FocusPoint`.
+- `Single`: triggers one autofocus operation at `FocusPoint`, or at the platform-default region when the point is `null`.
+
+## CameraPreviewMirroringMode
+
+- `Automatic`: mirrors only the front-camera preview.
+- `Mirrored`: always mirrors the preview.
+- `Unmirrored`: never mirrors the preview.
+
+Preview mirroring is independent from delivered data. Use `CameraFrame.IsMirrored` to determine the actual frame-buffer behavior.
 
 ## CameraCaptureConfiguration
 
@@ -227,6 +288,7 @@ Reports the effective native output after negotiation.
 - `SessionConfigurationFailed`
 - `DeviceDisconnected`
 - `CaptureFailed`
+- `ControlConfigurationFailed`
 
 These values are platform-independent and stable. Platform-specific diagnostics are available separately through `CameraErrorEventArgs.PlatformCode`.
 
@@ -244,6 +306,13 @@ These values are platform-independent and stable. Platform-specific diagnostics 
 | --- | --- | --- |
 | `PreviousConfiguration` | `CameraCaptureConfiguration` | Previously effective configuration, or `null`. |
 | `Configuration` | `CameraCaptureConfiguration` | Newly effective configuration, or `null` while restarting/stopped/failed. |
+
+## CameraControlStateChangedEventArgs
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `PreviousState` | `CameraControlState` | Previously effective controls, or `null`. |
+| `State` | `CameraControlState` | Newly effective controls, or `null` while restarting/stopped/failed. |
 
 ## CameraErrorEventArgs
 

@@ -4,7 +4,8 @@ internal readonly record struct CameraPreviewTransform(
     float ScaleX,
     float ScaleY,
     float RotationDegrees,
-    int RelativeRotationDegrees);
+    int RelativeRotationDegrees,
+    bool IsMirrored);
 
 internal static class CameraPreviewTransformCalculator
 {
@@ -15,7 +16,26 @@ internal static class CameraPreviewTransformCalculator
         int previewHeight,
         int sensorOrientationDegrees,
         int displayRotationDegrees,
-        bool isFrontFacing)
+        bool isFrontFacing) =>
+        Calculate(
+            viewWidth,
+            viewHeight,
+            previewWidth,
+            previewHeight,
+            sensorOrientationDegrees,
+            displayRotationDegrees,
+            isFrontFacing,
+            false);
+
+    internal static CameraPreviewTransform Calculate(
+        int viewWidth,
+        int viewHeight,
+        int previewWidth,
+        int previewHeight,
+        int sensorOrientationDegrees,
+        int displayRotationDegrees,
+        bool isFrontFacing,
+        bool isPreviewMirrored)
     {
         if (viewWidth <= 0)
             throw new ArgumentOutOfRangeException(nameof(viewWidth));
@@ -78,7 +98,8 @@ internal static class CameraPreviewTransformCalculator
             scaleX,
             scaleY,
             -displayRotation,
-            relativeRotation);
+            relativeRotation,
+            isPreviewMirrored);
     }
 
     internal static int ComputeRelativeRotation(

@@ -16,6 +16,7 @@ CameraView.Maui is a reusable .NET MAUI camera preview control for Android and i
 - Automatic camera release and restart across app deactivation, screen lock, and resume.
 - Observable camera state and structured cross-platform errors.
 - Configurable resolution, pixel format, native frame rate, delivery policy, JPEG quality, throttling, and effective camera capabilities.
+- Live zoom, torch, tap-to-focus, exposure compensation, and independent preview mirroring with per-camera capability reporting.
 - .NET 9 and .NET 10 MAUI targets in the same package.
 
 ## Requirements
@@ -344,6 +345,49 @@ CameraPreview.Enabled = true;
 
 The control also releases the native camera when the MAUI window is deactivated and restores it after activation if `Enabled` remains `true`.
 
+## Interactive zoom, torch, focus, exposure, and mirroring
+
+Interactive controls use a separate immutable value and do not restart the running capture session:
+
+```csharp
+CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+{
+    ZoomFactor = 2,
+    TorchEnabled = true,
+    ExposureCompensation = 0.5,
+    FocusMode = CameraFocusMode.Single,
+    FocusPoint = new CameraPoint(0.35, 0.6),
+    PreviewMirroring = CameraPreviewMirroringMode.Automatic
+};
+```
+
+`CameraPoint` uses visible-preview coordinates normalized from top-left `(0,0)` to bottom-right `(1,1)`. To implement tap-to-focus, divide the gesture position by the preview's width and height and assign the resulting point with `FocusMode.Single`. Set `FocusPoint` back to `null` and `FocusMode.Continuous` to restore centered continuous autofocus.
+
+Every camera has different limits. Build sliders and enable buttons from `EffectiveControls` instead of assuming that rear and front cameras match:
+
+```csharp
+CameraPreview.EffectiveControlsChanged += (_, args) =>
+{
+    if (args.State is not { } controls)
+        return;
+
+    ZoomSlider.Minimum = controls.Capabilities.MinimumZoomFactor;
+    ZoomSlider.Maximum = controls.Capabilities.MaximumZoomFactor;
+    ZoomSlider.IsEnabled = controls.Capabilities.IsZoomSupported;
+    TorchButton.IsEnabled = controls.Capabilities.IsTorchSupported;
+    ExposureSlider.Minimum = controls.Capabilities.MinimumExposureCompensation;
+    ExposureSlider.Maximum = controls.Capabilities.MaximumExposureCompensation;
+
+    // Read applied values after clamp, quantization, or unsupported fallback.
+    ZoomSlider.Value = controls.ZoomFactor;
+    ExposureSlider.Value = controls.ExposureCompensation;
+};
+```
+
+Invalid universal inputs are rejected immediately. Valid requests outside the active hardware's capabilities are clamped or fall back deterministically and are reported through `UsedZoomFallback`, `UsedTorchFallback`, `UsedFocusFallback`, and `UsedExposureFallback`. Requests remain configured across front/rear switching and resume, then are renegotiated for the new device.
+
+`PreviewMirroring` affects the native preview only. The frame pipeline is independent: always inspect `CameraFrame.IsMirrored` before rendering or processing delivered pixels.
+
 ## Observe camera state and errors
 
 `State` and `IsRunning` describe the actual native session, rather than only the requested value of `Enabled`:
@@ -365,7 +409,7 @@ CameraPreview.ErrorOccurred += (_, args) =>
 };
 ```
 
-Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, and `Failed`. Stable error codes distinguish permission denial, unavailable or busy cameras, session configuration failures, device disconnection, and frame capture failures.
+Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, and `Failed`. Stable error codes distinguish permission denial, unavailable or busy cameras, session configuration failures, device disconnection, frame capture failures, and non-fatal control-application failures.
 
 `StateChanged` and `ErrorOccurred` run through the view dispatcher. `OnFrameResult` and `FrameAvailable` continue to run on the native capture queue for throughput.
 
@@ -378,6 +422,8 @@ Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDe
 | `Enabled` | `true` | Controls native camera ownership and capture. |
 | `CaptureOptions` | `CameraCaptureOptions.Default` | Atomically configures resolution, frame format, native rate, delivery policy, JPEG quality, and throttling. |
 | `EffectiveConfiguration` | `null` | Reports selected sizes, format, native rate, delivery settings, and device capabilities. |
+| `ControlOptions` | `CameraControlOptions.Default` | Atomically requests live zoom, torch, focus, exposure, and preview mirroring without restarting capture. |
+| `EffectiveControls` | `null` | Reports applied control values, native ranges, supported modes, and fallback flags. |
 | `State` | `CameraState.Stopped` | Reports the current native camera lifecycle state. |
 | `IsRunning` | `false` | Indicates that native capture is actually running. |
 | `OnFrameResult` | — | Emits successful JPEG frames through `CameraResult.Image`. |
@@ -385,6 +431,7 @@ Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDe
 | `StateChanged` | — | Reports state transitions on the MAUI dispatcher. |
 | `ErrorOccurred` | — | Reports structured camera failures on the MAUI dispatcher. |
 | `EffectiveConfigurationChanged` | — | Reports configuration negotiation and clearing on the MAUI dispatcher. |
+| `EffectiveControlsChanged` | — | Reports applied controls and per-camera capabilities on the MAUI dispatcher. |
 
 ## Frame-processing recommendations
 
@@ -402,6 +449,7 @@ Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDe
 - [Getting started](docs/getting-started.md)
 - [Platform setup](docs/platform-setup.md)
 - [API reference](docs/api-reference.md)
+- [Interactive camera controls](docs/interactive-controls.md)
 - [Architecture and lifecycle](docs/architecture.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Roadmap](docs/ROADMAP.md)

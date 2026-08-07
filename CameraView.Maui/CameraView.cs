@@ -15,6 +15,13 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
             typeof(CameraView),
             null);
 
+    private static readonly BindablePropertyKey EffectiveControlsPropertyKey =
+        BindableProperty.CreateReadOnly(
+            nameof(EffectiveControls),
+            typeof(CameraControlState),
+            typeof(CameraView),
+            null);
+
     public static readonly BindableProperty CameraProperty = BindableProperty.Create(
         nameof(Camera),
         typeof(CameraOptions),
@@ -46,10 +53,26 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
             options.Validate();
         });
 
+    public static readonly BindableProperty ControlOptionsProperty = BindableProperty.Create(
+        nameof(ControlOptions),
+        typeof(CameraControlOptions),
+        typeof(CameraView),
+        CameraControlOptions.Default,
+        propertyChanging: (_, _, newValue) =>
+        {
+            if (newValue is not CameraControlOptions options)
+                throw new ArgumentNullException(nameof(ControlOptions));
+
+            options.Validate();
+        });
+
     public static readonly BindableProperty StateProperty = StatePropertyKey.BindableProperty;
 
     public static readonly BindableProperty EffectiveConfigurationProperty =
         EffectiveConfigurationPropertyKey.BindableProperty;
+
+    public static readonly BindableProperty EffectiveControlsProperty =
+        EffectiveControlsPropertyKey.BindableProperty;
 
     // Keep the original field names for source compatibility with the Xamarin control.
     public static readonly BindableProperty CameraPreview = OrientationProperty;
@@ -81,8 +104,17 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
         set => SetValue(CaptureOptionsProperty, value);
     }
 
+    public CameraControlOptions ControlOptions
+    {
+        get => (CameraControlOptions)GetValue(ControlOptionsProperty);
+        set => SetValue(ControlOptionsProperty, value);
+    }
+
     public CameraCaptureConfiguration EffectiveConfiguration =>
         (CameraCaptureConfiguration)GetValue(EffectiveConfigurationProperty);
+
+    public CameraControlState EffectiveControls =>
+        (CameraControlState)GetValue(EffectiveControlsProperty);
 
     public CameraState State => (CameraState)GetValue(StateProperty);
 
@@ -100,6 +132,9 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
 
     public event EventHandler<CameraCaptureConfigurationChangedEventArgs>
         EffectiveConfigurationChanged;
+
+    public event EventHandler<CameraControlStateChangedEventArgs>
+        EffectiveControlsChanged;
 
     public void SetResult(byte[] image)
     {
@@ -178,6 +213,18 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
                 configuration));
     }
 
+    internal void SetEffectiveControls(CameraControlState state)
+    {
+        var previousState = EffectiveControls;
+        if (ReferenceEquals(previousState, state))
+            return;
+
+        SetValue(EffectiveControlsPropertyKey, state);
+        InvokeSafely(
+            EffectiveControlsChanged,
+            new CameraControlStateChangedEventArgs(previousState, state));
+    }
+
     internal void SetCameraState(CameraState state)
     {
         var previousState = State;
@@ -194,6 +241,11 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
     internal void ReportCameraFailure(CameraState state, CameraFailure failure)
     {
         SetCameraState(state);
+        ReportCameraError(failure);
+    }
+
+    internal void ReportCameraError(CameraFailure failure)
+    {
         InvokeSafely(
             ErrorOccurred,
             new CameraErrorEventArgs(

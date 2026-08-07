@@ -15,10 +15,10 @@
 
     <IsPackable>true</IsPackable>
     <PackageId>CameraView.Maui</PackageId>
-    <Version>1.2.2</Version>
+    <Version>1.3.0</Version>
     <Authors>Mi Lattanzio</Authors>
-    <Description>A cross-platform .NET MAUI camera preview with JPEG and high-throughput raw frame streaming on Android and iOS.</Description>
-    <PackageTags>maui;camera;android;ios;camera2;avfoundation;frames;yuv</PackageTags>
+    <Description>A cross-platform .NET MAUI camera preview with JPEG/raw frame streaming and interactive camera controls on Android and iOS.</Description>
+    <PackageTags>maui;camera;android;ios;camera2;avfoundation;frames;yuv;zoom;torch;autofocus</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

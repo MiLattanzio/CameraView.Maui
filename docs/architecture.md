@@ -9,6 +9,8 @@
 
 Changing camera, orientation, enabled state, or the immutable `CaptureOptions` value increments a configuration version. Asynchronous permission and camera-start work verifies this version before touching the current native view. Stale operations and stale configuration callbacks therefore cannot restart a camera or replace effective settings after a newer configuration has been applied.
 
+`ControlOptions` has an independent version. Replacing it does not invalidate or restart capture: the handler forwards it to the current native view, and only the newest control callback may replace `EffectiveControls`. A full camera reconfiguration invalidates both versions and applies the latest control options to the new session.
+
 ## Lifecycle
 
 The handler subscribes to the owning MAUI `Window` while the view is loaded.
@@ -55,3 +57,13 @@ Native frame-rate negotiation and managed delivery throttling are independent. `
 `FrameDeliveryMode.Latest` uses `AcquireLatestImage` and `AlwaysDiscardsLateVideoFrames`, prioritizing latency without a managed backlog. `Sequential` requests producer order, while `MaxOutstandingFrames` limits retained Android buffers. Holding every native buffer may temporarily stall delivery by design rather than allowing unbounded allocation.
 
 Consumers should avoid expensive synchronous work in either frame callback. JPEG byte arrays are independently owned and can be queued into a bounded channel. Raw frames should normally be consumed synchronously; asynchronous consumers call `Retain()` and must dispose the lease. Only UI updates are marshalled to the main thread.
+
+## Interactive controls
+
+The cross-platform control contract separates requested values from applied state. `CameraControlNegotiator` validates device-independent values, clamps zoom and exposure to reported ranges, quantizes exposure when Android reports a step, falls back to supported focus modes, disables unsupported torch requests, and resolves automatic preview mirroring from the selected camera. Applications observe the result through `EffectiveControls` rather than guessing native behavior.
+
+Android applies controls to the existing Camera2 repeating request. API 30 and later use `CONTROL_ZOOM_RATIO`; older devices use a centered `SCALER_CROP_REGION`. Focus points are normalized in preview coordinates, mapped through aspect-fill cropping, unmirrored/rotated into sensor coordinates, and converted to bounded AF/AE metering rectangles. Single focus submits one `CONTROL_AF_TRIGGER_START` request before returning the repeating request to idle. Torch and exposure compensation share the same atomic request update.
+
+iOS locks the active `AVCaptureDevice` only while assigning zoom, torch, focus point/mode, and exposure target bias. `AVCaptureVideoPreviewLayer` converts normalized visible-preview points to device points of interest. Preview mirroring is updated on the preview connection alone; the video-data connection retains the established front-camera output behavior, which remains visible through `CameraFrame.IsMirrored`.
+
+Control application failures raise `ControlConfigurationFailed` without tearing down an otherwise healthy capture session. Unsupported values are normal negotiation outcomes, not errors. Requested options survive rotation, camera switching, window deactivation, and resume; native capabilities and effective values are recomputed for every new selected camera.

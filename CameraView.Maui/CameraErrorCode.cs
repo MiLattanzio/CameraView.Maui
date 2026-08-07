@@ -8,5 +8,6 @@ public enum CameraErrorCode
     CameraInUse,
     SessionConfigurationFailed,
     DeviceDisconnected,
-    CaptureFailed
+    CaptureFailed,
+    ControlConfigurationFailed
 }

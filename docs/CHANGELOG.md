@@ -16,14 +16,20 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - Frame rotation and mirroring metadata for processing raw sensor output correctly.
 - Effective camera capabilities covering concrete formats, output resolutions, and supported native frame-rate ranges.
 - A `CameraCaptureOptions.Realtime` profile for maximum-rate 720p native YUV analysis.
+- Atomic live `CameraControlOptions` for zoom, torch, normalized focus points, focus mode, exposure compensation, and preview mirroring.
+- `EffectiveControls` and `EffectiveControlsChanged` reporting clamped values, native ranges, supported focus modes, torch availability, and deterministic fallbacks.
+- Camera2 zoom-ratio/crop, AF/AE metering regions, autofocus triggers, exposure compensation, and torch integration on Android.
+- AVFoundation zoom, focus point/mode, exposure bias, torch, and independent preview mirroring integration on iOS.
 
 ### Changed
 
-- Package version advanced to 1.2.2 and API compatibility now validates against public version 1.2.1.
+- Package version advanced to 1.3.0 and API compatibility continues to validate against public version 1.2.1.
 - Android can stream direct `YUV_420_888` planes without JPEG encoding or a managed pixel copy.
 - iOS can stream locked NV12 or BGRA `CVPixelBuffer` planes without Core Image/UIKit conversion.
 - The sample application can switch between the compatibility JPEG profiles and the realtime raw profile.
 - `CameraCaptureOptions.Default` and `OnFrameResult` retain the 1.2.1 JPEG behavior.
+- Interactive control changes update the active native request/device without restarting the capture session and are reapplied after camera switching or resume.
+- The sample application includes live zoom and exposure sliders, torch, tap-to-focus, focus reset, and preview-mirroring controls.
 
 ### Fixed
 

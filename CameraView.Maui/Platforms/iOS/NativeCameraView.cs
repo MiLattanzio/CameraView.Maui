@@ -1,5 +1,6 @@
 using AVFoundation;
 using CoreFoundation;
+using CoreGraphics;
 using CoreImage;
 using CoreMedia;
 using CoreVideo;
@@ -17,9 +18,11 @@ public sealed class NativeCameraView : UIView
     private AVCaptureSession _captureSession;
     private AVCaptureVideoPreviewLayer _previewLayer;
     private AVCaptureVideoDataOutput _videoOutput;
+    private AVCaptureDevice _captureDevice;
     private VideoCaptureDelegate _captureDelegate;
     private Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> _frameCaptured;
     private Action<CameraCaptureConfiguration> _configurationSelected;
+    private Action<CameraControlState> _controlsSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
     private Action<CameraFailure> _captureFailed;
@@ -29,6 +32,7 @@ public sealed class NativeCameraView : UIView
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
     private CameraCaptureOptions _captureOptions;
+    private CameraControlOptions _controlOptions;
     private CameraCaptureConfiguration _effectiveConfiguration;
     private bool _isRunning;
     private int _jpegQuality;
@@ -36,6 +40,8 @@ public sealed class NativeCameraView : UIView
     private CameraFrameFormat _frameFormat;
     private CameraFrameRateRange? _effectiveNativeFrameRate;
     private CameraCaptureCapabilities _capabilities;
+    private CameraControlCapabilities _controlCapabilities;
+    private CameraControlState _effectiveControls;
     private CameraResolution[] _availableCaptureResolutions = [];
     private CameraFrameRateRange[] _availableFrameRateRanges = [];
     private RawFrameCapacity _rawFrameCapacity;
@@ -68,6 +74,8 @@ public sealed class NativeCameraView : UIView
                 }
             },
             CameraCaptureOptions.Default,
+            CameraControlOptions.Default,
+            null,
             null,
             null,
             null,
@@ -78,7 +86,9 @@ public sealed class NativeCameraView : UIView
         CameraOrientation orientation,
         Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> frameCaptured,
         CameraCaptureOptions captureOptions,
+        CameraControlOptions controlOptions,
         Action<CameraCaptureConfiguration> configurationSelected,
+        Action<CameraControlState> controlsSelected,
         Action captureStarted,
         Action captureSuspended,
         Action<CameraFailure> captureFailed)
@@ -93,6 +103,7 @@ public sealed class NativeCameraView : UIView
             _captureSuspended = captureSuspended;
             _captureFailed = captureFailed;
             _configurationSelected = configurationSelected;
+            UpdateControls(controlOptions, controlsSelected, captureFailed);
             return;
         }
 
@@ -101,11 +112,13 @@ public sealed class NativeCameraView : UIView
         _cameraOption = cameraOption;
         _orientation = orientation;
         _captureOptions = captureOptions;
+        _controlOptions = controlOptions;
         _frameCaptured = frameCaptured;
         _captureStarted = captureStarted;
         _captureSuspended = captureSuspended;
         _captureFailed = captureFailed;
         _configurationSelected = configurationSelected;
+        _controlsSelected = controlsSelected;
         _jpegQuality = captureOptions.JpegQuality ?? 85;
         _minimumFrameInterval = captureOptions.GetEffectiveMinimumFrameInterval();
         _rawFrameCapacity = new RawFrameCapacity(captureOptions.MaxOutstandingFrames);
@@ -147,8 +160,9 @@ public sealed class NativeCameraView : UIView
                 Frame = Bounds,
                 VideoGravity = AVLayerVideoGravity.ResizeAspectFill
             };
-            ConfigureConnection(_previewLayer.Connection);
+            ConfigureConnection(_previewLayer.Connection, true);
             Layer.InsertSublayer(_previewLayer, 0);
+            ApplyInitialControlsWithPreviewMapping();
 
             ObserveSession();
             _isRunning = true;
@@ -163,6 +177,7 @@ public sealed class NativeCameraView : UIView
             }
 
             _configurationSelected?.Invoke(_effectiveConfiguration);
+            _controlsSelected?.Invoke(_effectiveControls);
             _captureStarted?.Invoke();
         }
         catch (CameraPlatformException)
@@ -182,6 +197,63 @@ public sealed class NativeCameraView : UIView
         }
     }
 
+    internal void UpdateControls(
+        CameraControlOptions controlOptions,
+        Action<CameraControlState> controlsSelected,
+        Action<CameraFailure> controlsFailed)
+    {
+        ArgumentNullException.ThrowIfNull(controlOptions);
+        controlOptions.Validate();
+        _controlOptions = controlOptions;
+        _controlsSelected = controlsSelected;
+
+        if (!_isRunning || _captureDevice is null || _controlCapabilities is null)
+            return;
+
+        var previousControls = _effectiveControls;
+        try
+        {
+            var effectiveControls = CameraControlNegotiator.Negotiate(
+                controlOptions,
+                _controlCapabilities,
+                _cameraOption);
+            var focusChanged = previousControls?.FocusMode != effectiveControls.FocusMode ||
+                               previousControls?.FocusPoint != effectiveControls.FocusPoint;
+            _effectiveControls = effectiveControls;
+            if (!_captureDevice.LockForConfiguration(out var configurationError))
+            {
+                var message = configurationError?.LocalizedDescription ??
+                              "The camera controls could not be configured.";
+                configurationError?.Dispose();
+                throw new InvalidOperationException(message);
+            }
+
+            try
+            {
+                ApplyControlsToDevice(_captureDevice, focusChanged);
+            }
+            finally
+            {
+                _captureDevice.UnlockForConfiguration();
+                configurationError?.Dispose();
+            }
+
+            ConfigureConnection(_previewLayer?.Connection, true);
+            _controlsSelected?.Invoke(_effectiveControls);
+        }
+        catch (System.Exception exception)
+        {
+            _effectiveControls = previousControls;
+            ConfigureConnection(_previewLayer?.Connection, true);
+            controlsFailed?.Invoke(new CameraFailure(
+                CameraErrorCode.ControlConfigurationFailed,
+                "iOS could not apply the requested camera controls.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
+    }
+
     public void Stop()
     {
         _isRunning = false;
@@ -190,11 +262,15 @@ public sealed class NativeCameraView : UIView
         _captureSuspended = null;
         _captureFailed = null;
         _configurationSelected = null;
+        _controlsSelected = null;
         _captureOptions = null;
+        _controlOptions = null;
         _effectiveConfiguration = null;
         _frameFormat = CameraFrameFormat.Jpeg;
         _effectiveNativeFrameRate = null;
         _capabilities = null;
+        _controlCapabilities = null;
+        _effectiveControls = null;
         _availableCaptureResolutions = [];
         _availableFrameRateRanges = [];
         _rawFrameCapacity = null;
@@ -211,6 +287,8 @@ public sealed class NativeCameraView : UIView
         _captureDelegate = null;
         _videoOutput?.Dispose();
         _videoOutput = null;
+        _captureDevice?.Dispose();
+        _captureDevice = null;
         _previewLayer?.Dispose();
         _previewLayer = null;
         _captureSession?.Dispose();
@@ -244,6 +322,13 @@ public sealed class NativeCameraView : UIView
                 $"No {cameraOption} camera was found.",
                 false,
                 "CameraNotFound"));
+
+        _captureDevice = device;
+        _controlCapabilities = GetControlCapabilities(device);
+        _effectiveControls = CameraControlNegotiator.Negotiate(
+            _controlOptions,
+            _controlCapabilities,
+            _cameraOption);
 
         var deviceConfiguration = ConfigureDevice(device, captureOptions);
 
@@ -370,8 +455,7 @@ public sealed class NativeCameraView : UIView
                 _effectiveNativeFrameRate = null;
             }
 
-            if (device.IsFocusModeSupported(AVCaptureFocusMode.ContinuousAutoFocus))
-                device.FocusMode = AVCaptureFocusMode.ContinuousAutoFocus;
+            ApplyControlsToDevice(device, false);
         }
         finally
         {
@@ -380,6 +464,100 @@ public sealed class NativeCameraView : UIView
         }
 
         return selectedResolution.Value;
+    }
+
+    private static CameraControlCapabilities GetControlCapabilities(
+        AVCaptureDevice device)
+    {
+        var focusModes = new List<CameraFocusMode>();
+        if (device.IsFocusModeSupported(AVCaptureFocusMode.ContinuousAutoFocus))
+            focusModes.Add(CameraFocusMode.Continuous);
+        if (device.IsFocusModeSupported(AVCaptureFocusMode.AutoFocus))
+            focusModes.Add(CameraFocusMode.Single);
+
+        return new CameraControlCapabilities(
+            (double)device.MinAvailableVideoZoomFactor,
+            (double)device.MaxAvailableVideoZoomFactor,
+            device.HasTorch && device.IsTorchModeSupported(AVCaptureTorchMode.On),
+            device.FocusPointOfInterestSupported,
+            focusModes,
+            device.MinExposureTargetBias,
+            device.MaxExposureTargetBias,
+            0);
+    }
+
+    private void ApplyControlsToDevice(AVCaptureDevice device, bool applyFocus)
+    {
+        var controls = _effectiveControls;
+        if (controls is null)
+            return;
+
+        device.VideoZoomFactor = (nfloat)controls.ZoomFactor;
+
+        if (device.HasTorch)
+        {
+            var torchMode = controls.TorchEnabled
+                ? AVCaptureTorchMode.On
+                : AVCaptureTorchMode.Off;
+            if (device.IsTorchModeSupported(torchMode))
+                device.TorchMode = torchMode;
+        }
+
+        if (applyFocus && device.FocusPointOfInterestSupported)
+        {
+            device.FocusPointOfInterest = controls.FocusPoint.HasValue
+                ? GetDeviceFocusPoint(controls.FocusPoint.Value)
+                : new CGPoint(0.5, 0.5);
+        }
+
+        if (applyFocus && controls.FocusMode.HasValue)
+        {
+            var focusMode = controls.FocusMode == CameraFocusMode.Single
+                ? AVCaptureFocusMode.AutoFocus
+                : AVCaptureFocusMode.ContinuousAutoFocus;
+            if (device.IsFocusModeSupported(focusMode))
+                device.FocusMode = focusMode;
+        }
+
+        if (controls.Capabilities.SupportsExposureCompensation)
+            device.SetExposureTargetBias((float)controls.ExposureCompensation, null);
+    }
+
+    private void ApplyInitialControlsWithPreviewMapping()
+    {
+        if (_captureDevice is null)
+            return;
+
+        if (!_captureDevice.LockForConfiguration(out var configurationError))
+        {
+            var message = configurationError?.LocalizedDescription ??
+                          "The initial camera controls could not be configured.";
+            configurationError?.Dispose();
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.ControlConfigurationFailed,
+                message,
+                true,
+                "DeviceControlLockFailed"));
+        }
+
+        try
+        {
+            ApplyControlsToDevice(_captureDevice, true);
+        }
+        finally
+        {
+            _captureDevice.UnlockForConfiguration();
+            configurationError?.Dispose();
+        }
+    }
+
+    private CGPoint GetDeviceFocusPoint(CameraPoint point)
+    {
+        if (_previewLayer is null || Bounds.Width <= 0 || Bounds.Height <= 0)
+            return new CGPoint(point.X, point.Y);
+
+        return _previewLayer.CaptureDevicePointOfInterestForPoint(
+            new CGPoint(point.X * Bounds.Width, point.Y * Bounds.Height));
     }
 
     private void ConfigureOutput()
@@ -443,7 +621,9 @@ public sealed class NativeCameraView : UIView
         }
 
         _captureSession.AddOutput(_videoOutput);
-        ConfigureConnection(_videoOutput.ConnectionFromMediaType(AVMediaTypes.Video.GetConstant()));
+        ConfigureConnection(
+            _videoOutput.ConnectionFromMediaType(AVMediaTypes.Video.GetConstant()),
+            false);
     }
 
     private static CVPixelFormatType ResolvePixelFormat(
@@ -511,7 +691,7 @@ public sealed class NativeCameraView : UIView
             yield return CameraFrameFormat.Bgra8888;
     }
 
-    private void ConfigureConnection(AVCaptureConnection connection)
+    private void ConfigureConnection(AVCaptureConnection connection, bool isPreview)
     {
         if (connection is null)
             return;
@@ -532,7 +712,9 @@ public sealed class NativeCameraView : UIView
         if (connection.SupportsVideoMirroring)
         {
             connection.AutomaticallyAdjustsVideoMirroring = false;
-            connection.VideoMirrored = _cameraOption == CameraOptions.Front;
+            connection.VideoMirrored = isPreview
+                ? _effectiveControls?.IsPreviewMirrored == true
+                : _cameraOption == CameraOptions.Front;
         }
     }
 

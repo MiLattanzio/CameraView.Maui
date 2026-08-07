@@ -4,6 +4,7 @@ public partial class MainPage : ContentPage
 {
     private int _frameCount;
     private long _lastStatusUpdate;
+    private bool _updatingControlUi;
 
     public MainPage()
     {
@@ -12,6 +13,7 @@ public partial class MainPage : ContentPage
         CameraPreview.StateChanged += OnCameraStateChanged;
         CameraPreview.ErrorOccurred += OnCameraError;
         CameraPreview.EffectiveConfigurationChanged += OnEffectiveConfigurationChanged;
+        CameraPreview.EffectiveControlsChanged += OnEffectiveControlsChanged;
     }
 
     protected override void OnAppearing()
@@ -89,6 +91,117 @@ public partial class MainPage : ContentPage
         CameraPreview.Camera = CameraPreview.Camera == CameraOptions.Rear
             ? CameraOptions.Front
             : CameraOptions.Rear;
+
+    private void OnEffectiveControlsChanged(
+        object sender,
+        CameraControlStateChangedEventArgs eventArgs)
+    {
+        var controls = eventArgs.State;
+        if (controls is null)
+        {
+            ControlsLabel.Text = "Controlli: in attesa";
+            return;
+        }
+
+        _updatingControlUi = true;
+        try
+        {
+            var capabilities = controls.Capabilities;
+            ZoomSlider.Minimum = capabilities.MinimumZoomFactor;
+            ZoomSlider.Maximum = capabilities.MaximumZoomFactor;
+            ZoomSlider.Value = controls.ZoomFactor;
+            ZoomSlider.IsEnabled = capabilities.IsZoomSupported;
+            ExposureSlider.Minimum = capabilities.MinimumExposureCompensation;
+            ExposureSlider.Maximum = capabilities.MaximumExposureCompensation;
+            ExposureSlider.Value = controls.ExposureCompensation;
+            ExposureSlider.IsEnabled = capabilities.SupportsExposureCompensation;
+            TorchButton.IsEnabled = capabilities.IsTorchSupported;
+            TorchButton.Text = controls.TorchEnabled ? "Torcia: on" : "Torcia: off";
+            ZoomLabel.Text = $"{controls.ZoomFactor:0.00}x";
+            ExposureLabel.Text = $"{controls.ExposureCompensation:+0.00;-0.00;0.00}";
+            MirroringButton.Text = $"Mirror: {CameraPreview.ControlOptions.PreviewMirroring.ToString().ToLowerInvariant()}";
+            ControlsLabel.Text =
+                $"Zoom {capabilities.MinimumZoomFactor:0.##}-{capabilities.MaximumZoomFactor:0.##}x - " +
+                $"EV {capabilities.MinimumExposureCompensation:0.##}..{capabilities.MaximumExposureCompensation:0.##} - " +
+                $"focus {controls.FocusMode?.ToString() ?? "n/a"}" +
+                (controls.FocusPoint.HasValue ? $" @ {controls.FocusPoint.Value}" : string.Empty) +
+                $" - mirror {(controls.IsPreviewMirrored ? "on" : "off")}";
+        }
+        finally
+        {
+            _updatingControlUi = false;
+        }
+    }
+
+    private void OnZoomChanged(object sender, ValueChangedEventArgs eventArgs)
+    {
+        if (_updatingControlUi)
+            return;
+
+        ZoomLabel.Text = $"{eventArgs.NewValue:0.00}x";
+        CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+        {
+            ZoomFactor = eventArgs.NewValue
+        };
+    }
+
+    private void OnExposureChanged(object sender, ValueChangedEventArgs eventArgs)
+    {
+        if (_updatingControlUi)
+            return;
+
+        ExposureLabel.Text = $"{eventArgs.NewValue:+0.00;-0.00;0.00}";
+        CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+        {
+            ExposureCompensation = eventArgs.NewValue
+        };
+    }
+
+    private void OnToggleTorchClicked(object sender, EventArgs eventArgs)
+    {
+        CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+        {
+            TorchEnabled = !CameraPreview.ControlOptions.TorchEnabled
+        };
+    }
+
+    private void OnResetFocusClicked(object sender, EventArgs eventArgs)
+    {
+        CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+        {
+            FocusMode = CameraFocusMode.Continuous,
+            FocusPoint = null
+        };
+    }
+
+    private void OnPreviewTapped(object sender, TappedEventArgs eventArgs)
+    {
+        var position = eventArgs.GetPosition(CameraPreview);
+        if (!position.HasValue || CameraPreview.Width <= 0 || CameraPreview.Height <= 0)
+            return;
+
+        CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+        {
+            FocusMode = CameraFocusMode.Single,
+            FocusPoint = new CameraPoint(
+                Math.Clamp(position.Value.X / CameraPreview.Width, 0, 1),
+                Math.Clamp(position.Value.Y / CameraPreview.Height, 0, 1))
+        };
+    }
+
+    private void OnToggleMirroringClicked(object sender, EventArgs eventArgs)
+    {
+        var mirroring = CameraPreview.ControlOptions.PreviewMirroring switch
+        {
+            CameraPreviewMirroringMode.Automatic => CameraPreviewMirroringMode.Mirrored,
+            CameraPreviewMirroringMode.Mirrored => CameraPreviewMirroringMode.Unmirrored,
+            _ => CameraPreviewMirroringMode.Automatic
+        };
+        CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+        {
+            PreviewMirroring = mirroring
+        };
+    }
 
     private void OnToggleCameraClicked(object sender, EventArgs e)
     {

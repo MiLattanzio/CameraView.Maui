@@ -7,6 +7,7 @@ This directory contains the user, contributor, and maintainer documentation for 
 - [Getting started](getting-started.md)
 - [Platform setup](platform-setup.md)
 - [API reference](api-reference.md)
+- [Interactive camera controls](interactive-controls.md)
 - [Architecture and lifecycle](architecture.md)
 - [Troubleshooting](troubleshooting.md)
 - [Roadmap](ROADMAP.md)

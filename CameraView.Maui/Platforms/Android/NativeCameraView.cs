@@ -9,6 +9,8 @@ using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using Java.Lang;
+using Math = System.Math;
+using Rect = Android.Graphics.Rect;
 using Size = Android.Util.Size;
 
 namespace CameraView.Maui;
@@ -37,12 +39,14 @@ public sealed class NativeCameraView : FrameLayout
     private CameraCharacteristics _cameraCharacteristics;
     private Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> _frameCaptured;
     private Action<CameraCaptureConfiguration> _configurationSelected;
+    private Action<CameraControlState> _controlsSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
     private Action<CameraFailure> _captureFailed;
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
     private CameraCaptureOptions _captureOptions;
+    private CameraControlOptions _controlOptions;
     private CameraResolution _captureResolution;
     private CameraCaptureConfiguration _effectiveConfiguration;
     private bool _isRunning;
@@ -53,6 +57,8 @@ public sealed class NativeCameraView : FrameLayout
     private Android.Util.Range _nativeFrameRateRange;
     private CameraFrameRateRange? _effectiveNativeFrameRate;
     private CameraCaptureCapabilities _capabilities;
+    private CameraControlCapabilities _controlCapabilities;
+    private CameraControlState _effectiveControls;
     private CameraFrameRateRange[] _availableFrameRateRanges = [];
 
     public NativeCameraView(Context context) : base(context)
@@ -95,6 +101,8 @@ public sealed class NativeCameraView : FrameLayout
                 }
             },
             CameraCaptureOptions.Default,
+            CameraControlOptions.Default,
+            null,
             null,
             null,
             null,
@@ -105,7 +113,9 @@ public sealed class NativeCameraView : FrameLayout
         CameraOrientation orientation,
         Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> frameCaptured,
         CameraCaptureOptions captureOptions,
+        CameraControlOptions controlOptions,
         Action<CameraCaptureConfiguration> configurationSelected,
+        Action<CameraControlState> controlsSelected,
         Action captureStarted,
         Action captureSuspended,
         Action<CameraFailure> captureFailed)
@@ -120,6 +130,7 @@ public sealed class NativeCameraView : FrameLayout
             _captureSuspended = captureSuspended;
             _captureFailed = captureFailed;
             _configurationSelected = configurationSelected;
+            UpdateControls(controlOptions, controlsSelected, captureFailed);
             return;
         }
 
@@ -128,11 +139,13 @@ public sealed class NativeCameraView : FrameLayout
         _cameraOption = cameraOption;
         _orientation = orientation;
         _captureOptions = captureOptions;
+        _controlOptions = controlOptions;
         _frameCaptured = frameCaptured;
         _captureStarted = captureStarted;
         _captureSuspended = captureSuspended;
         _captureFailed = captureFailed;
         _configurationSelected = configurationSelected;
+        _controlsSelected = controlsSelected;
         _jpegQuality = captureOptions.JpegQuality;
         _minimumFrameInterval = captureOptions.GetEffectiveMinimumFrameInterval();
         _lastFrameTicks = 0;
@@ -150,6 +163,11 @@ public sealed class NativeCameraView : FrameLayout
 
             var cameraId = FindCameraId(cameraOption);
             _cameraCharacteristics = _cameraManager.GetCameraCharacteristics(cameraId);
+            _controlCapabilities = GetControlCapabilities(_cameraCharacteristics);
+            _effectiveControls = CameraControlNegotiator.Negotiate(
+                _controlOptions,
+                _controlCapabilities,
+                _cameraOption);
             var configurationMap = _cameraCharacteristics.Get(
                 CameraCharacteristics.ScalerStreamConfigurationMap) as StreamConfigurationMap
                 ?? throw new CameraPlatformException(new CameraFailure(
@@ -217,6 +235,61 @@ public sealed class NativeCameraView : FrameLayout
         }
     }
 
+    internal void UpdateControls(
+        CameraControlOptions controlOptions,
+        Action<CameraControlState> controlsSelected,
+        Action<CameraFailure> controlsFailed)
+    {
+        ArgumentNullException.ThrowIfNull(controlOptions);
+        controlOptions.Validate();
+        _controlOptions = controlOptions;
+        _controlsSelected = controlsSelected;
+
+        if (!_isRunning || _controlCapabilities is null)
+            return;
+
+        var previousControls = _effectiveControls;
+        try
+        {
+            var effectiveControls = CameraControlNegotiator.Negotiate(
+                controlOptions,
+                _controlCapabilities,
+                _cameraOption);
+            var focusChanged = previousControls?.FocusMode != effectiveControls.FocusMode ||
+                               previousControls?.FocusPoint != effectiveControls.FocusPoint;
+            _effectiveControls = effectiveControls;
+            ConfigureTransform(_textureView.Width, _textureView.Height);
+            if (_previewBuilder is not null && _previewSession is not null)
+            {
+                ApplyControlsToBuilder(_previewBuilder);
+                SubmitControlRequest(focusChanged);
+                _controlsSelected?.Invoke(_effectiveControls);
+            }
+        }
+        catch (CameraAccessException exception)
+        {
+            _effectiveControls = previousControls;
+            ConfigureTransform(_textureView.Width, _textureView.Height);
+            controlsFailed?.Invoke(new CameraFailure(
+                CameraErrorCode.ControlConfigurationFailed,
+                "Android could not apply the requested camera controls.",
+                true,
+                exception.Reason.ToString(),
+                exception));
+        }
+        catch (System.Exception exception)
+        {
+            _effectiveControls = previousControls;
+            ConfigureTransform(_textureView.Width, _textureView.Height);
+            controlsFailed?.Invoke(new CameraFailure(
+                CameraErrorCode.ControlConfigurationFailed,
+                "Android could not apply the requested camera controls.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
+    }
+
     public void Stop()
     {
         _isRunning = false;
@@ -225,7 +298,9 @@ public sealed class NativeCameraView : FrameLayout
         _captureSuspended = null;
         _captureFailed = null;
         _configurationSelected = null;
+        _controlsSelected = null;
         _captureOptions = null;
+        _controlOptions = null;
         _effectiveConfiguration = null;
         _captureResolution = CameraResolution.Default;
         _frameFormat = CameraFrameFormat.Jpeg;
@@ -233,6 +308,8 @@ public sealed class NativeCameraView : FrameLayout
         _nativeFrameRateRange = null;
         _effectiveNativeFrameRate = null;
         _capabilities = null;
+        _controlCapabilities = null;
+        _effectiveControls = null;
         _availableFrameRateRanges = [];
         _lastFrameTicks = 0;
 
@@ -430,6 +507,75 @@ public sealed class NativeCameraView : FrameLayout
             yield return CameraFrameFormat.Yuv420;
     }
 
+    private static CameraControlCapabilities GetControlCapabilities(
+        CameraCharacteristics characteristics)
+    {
+        var minimumZoomFactor = 1d;
+        var maximumZoomFactor =
+            (characteristics.Get(CameraCharacteristics.ScalerAvailableMaxDigitalZoom)
+                as Java.Lang.Float)?.DoubleValue() ?? 1d;
+
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            var zoomRange = characteristics.Get(
+                CameraCharacteristics.ControlZoomRatioRange) as Android.Util.Range;
+            minimumZoomFactor =
+                (zoomRange?.Lower as Java.Lang.Float)?.DoubleValue() ?? minimumZoomFactor;
+            maximumZoomFactor =
+                (zoomRange?.Upper as Java.Lang.Float)?.DoubleValue() ?? maximumZoomFactor;
+            zoomRange?.Dispose();
+        }
+
+        var flashAvailable = characteristics.Get(
+            CameraCharacteristics.FlashInfoAvailable) as Java.Lang.Boolean;
+        var isTorchSupported = flashAvailable?.BooleanValue() == true;
+        flashAvailable?.Dispose();
+
+        var focusModesObject = characteristics.Get(
+            CameraCharacteristics.ControlAfAvailableModes);
+#pragma warning disable CA1422
+        var nativeFocusModes = focusModesObject is null
+            ? []
+            : JNIEnv.GetArray<int>(focusModesObject.Handle);
+#pragma warning restore CA1422
+        focusModesObject?.Dispose();
+        var focusModes = new List<CameraFocusMode>();
+        if (nativeFocusModes.Contains((int)ControlAFMode.ContinuousPicture) ||
+            nativeFocusModes.Contains((int)ControlAFMode.ContinuousVideo))
+        {
+            focusModes.Add(CameraFocusMode.Continuous);
+        }
+        if (nativeFocusModes.Contains((int)ControlAFMode.Auto))
+            focusModes.Add(CameraFocusMode.Single);
+
+        var maximumFocusRegions =
+            (characteristics.Get(CameraCharacteristics.ControlMaxRegionsAf)
+                as Integer)?.IntValue() ?? 0;
+        var isFocusPointSupported = maximumFocusRegions > 0;
+
+        var compensationRange = characteristics.Get(
+            CameraCharacteristics.ControlAeCompensationRange) as Android.Util.Range;
+        var minimumCompensationIndex =
+            (compensationRange?.Lower as Integer)?.IntValue() ?? 0;
+        var maximumCompensationIndex =
+            (compensationRange?.Upper as Integer)?.IntValue() ?? 0;
+        var compensationStepValue = characteristics.Get(
+            CameraCharacteristics.ControlAeCompensationStep) as Android.Util.Rational;
+        var compensationStep = compensationStepValue?.DoubleValue() ?? 0;
+        compensationRange?.Dispose();
+        compensationStepValue?.Dispose();
+
+        return new CameraControlCapabilities(
+            Math.Max(double.Epsilon, minimumZoomFactor),
+            Math.Max(minimumZoomFactor, maximumZoomFactor),
+            isTorchSupported,
+            isFocusPointSupported,
+            focusModes,
+            minimumCompensationIndex * compensationStep,
+            maximumCompensationIndex * compensationStep,
+            compensationStep);
+    }
+
     private static CameraFrameRateRange? ToFrameRateRange(Android.Util.Range range)
     {
         var minimum = (range?.Lower as Integer)?.IntValue();
@@ -511,6 +657,7 @@ public sealed class NativeCameraView : FrameLayout
             _previewBuilder.Set(
                 CaptureRequest.ControlAeTargetFpsRange,
                 _nativeFrameRateRange);
+        ApplyControlsToBuilder(_previewBuilder);
 #pragma warning restore CA1422
 
         _effectiveConfiguration = new CameraCaptureConfiguration(
@@ -537,6 +684,187 @@ public sealed class NativeCameraView : FrameLayout
         _cameraDevice.CreateCaptureSession(_sessionConfiguration);
     }
 
+    private void TryStartPreview()
+    {
+        try
+        {
+            StartPreview();
+        }
+        catch (CameraAccessException exception)
+        {
+            ReportFailure(MapCameraAccessException(exception));
+        }
+        catch (System.Exception exception)
+        {
+            ReportFailure(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                "Android could not configure the preview and camera controls.",
+                true,
+                exception.GetType().Name,
+                exception));
+        }
+    }
+
+    private void ApplyControlsToBuilder(CaptureRequest.Builder builder)
+    {
+        var controls = _effectiveControls;
+        if (controls is null || _cameraCharacteristics is null)
+            return;
+
+#pragma warning disable CA1422
+        if (OperatingSystem.IsAndroidVersionAtLeast(30))
+        {
+            builder.Set(
+                CaptureRequest.ControlZoomRatio,
+                new Java.Lang.Float((float)controls.ZoomFactor));
+        }
+        else
+        {
+            var cropRegion = GetZoomCropRegion(controls.ZoomFactor);
+            if (cropRegion is not null)
+                builder.Set(CaptureRequest.ScalerCropRegion, cropRegion);
+        }
+
+        builder.Set(
+            CaptureRequest.FlashMode,
+            new Integer((int)(controls.TorchEnabled ? FlashMode.Torch : FlashMode.Off)));
+
+        var compensationStep = controls.Capabilities.ExposureCompensationStep;
+        var compensationIndex = compensationStep > 0
+            ? (int)Math.Round(
+                controls.ExposureCompensation / compensationStep,
+                MidpointRounding.AwayFromZero)
+            : 0;
+        builder.Set(
+            CaptureRequest.ControlAeExposureCompensation,
+            new Integer(compensationIndex));
+
+        if (controls.FocusMode.HasValue)
+        {
+            var nativeFocusMode = controls.FocusMode == CameraFocusMode.Single
+                ? ControlAFMode.Auto
+                : ControlAFMode.ContinuousPicture;
+            builder.Set(
+                CaptureRequest.ControlAfMode,
+                new Integer((int)nativeFocusMode));
+        }
+
+        if (controls.FocusPoint.HasValue)
+        {
+            var meteringRegion = CreateMeteringRegion(controls.FocusPoint.Value);
+            if (meteringRegion is not null)
+            {
+                builder.Set(CaptureRequest.ControlAfRegions, new[] { meteringRegion });
+                var maximumExposureRegions =
+                    (_cameraCharacteristics.Get(CameraCharacteristics.ControlMaxRegionsAe)
+                        as Integer)?.IntValue() ?? 0;
+                if (maximumExposureRegions > 0)
+                    builder.Set(CaptureRequest.ControlAeRegions, new[] { meteringRegion });
+            }
+        }
+        else
+        {
+            builder.Set(CaptureRequest.ControlAfRegions, null);
+            builder.Set(CaptureRequest.ControlAeRegions, null);
+        }
+#pragma warning restore CA1422
+    }
+
+    private void SubmitControlRequest(bool triggerFocus)
+    {
+        if (_previewSession is null || _previewBuilder is null)
+            return;
+
+#pragma warning disable CA1422
+        if (triggerFocus && _effectiveControls?.FocusMode == CameraFocusMode.Single)
+        {
+            _previewBuilder.Set(
+                CaptureRequest.ControlAfTrigger,
+                new Integer((int)ControlAFTrigger.Start));
+            using var focusRequest = _previewBuilder.Build();
+            _previewSession.Capture(focusRequest, null, _backgroundHandler);
+            _previewBuilder.Set(
+                CaptureRequest.ControlAfTrigger,
+                new Integer((int)ControlAFTrigger.Idle));
+        }
+        else if (triggerFocus)
+        {
+            _previewBuilder.Set(
+                CaptureRequest.ControlAfTrigger,
+                new Integer((int)ControlAFTrigger.Cancel));
+            using var cancelRequest = _previewBuilder.Build();
+            _previewSession.Capture(cancelRequest, null, _backgroundHandler);
+            _previewBuilder.Set(
+                CaptureRequest.ControlAfTrigger,
+                new Integer((int)ControlAFTrigger.Idle));
+        }
+        else
+        {
+            _previewBuilder.Set(
+                CaptureRequest.ControlAfTrigger,
+                new Integer((int)ControlAFTrigger.Idle));
+        }
+
+        using var repeatingRequest = _previewBuilder.Build();
+        _previewSession.SetRepeatingRequest(
+            repeatingRequest,
+            null,
+            _backgroundHandler);
+#pragma warning restore CA1422
+    }
+
+    private Rect GetZoomCropRegion(double zoomFactor)
+    {
+        var activeArray = _cameraCharacteristics?.Get(
+            CameraCharacteristics.SensorInfoActiveArraySize) as Rect;
+        if (activeArray is null)
+            return null;
+
+        var width = Math.Max(1, (int)Math.Round(activeArray.Width() / zoomFactor));
+        var height = Math.Max(1, (int)Math.Round(activeArray.Height() / zoomFactor));
+        var left = activeArray.Left + (activeArray.Width() - width) / 2;
+        var top = activeArray.Top + (activeArray.Height() - height) / 2;
+        return new Rect(left, top, left + width, top + height);
+    }
+
+    private MeteringRectangle CreateMeteringRegion(CameraPoint previewPoint)
+    {
+        var activeArray = _cameraCharacteristics?.Get(
+            CameraCharacteristics.SensorInfoActiveArraySize) as Rect;
+        if (activeArray is null)
+            return null;
+
+        var displayRotation = GetDisplayRotationDegrees(
+            _textureView.Display?.Rotation ?? SurfaceOrientation.Rotation0);
+        var sensorOrientation =
+            (_cameraCharacteristics.Get(CameraCharacteristics.SensorOrientation)
+                as Integer)?.IntValue() ?? 0;
+        var relativeRotation = CameraPreviewTransformCalculator.ComputeRelativeRotation(
+            sensorOrientation,
+            displayRotation,
+            _cameraOption == CameraOptions.Front);
+        var sensorPoint = CameraControlPointMapper.ToSensorPoint(
+            previewPoint,
+            _textureView.Width,
+            _textureView.Height,
+            _previewSize?.Width ?? 1,
+            _previewSize?.Height ?? 1,
+            relativeRotation,
+            _effectiveControls?.IsPreviewMirrored == true);
+        var bounds = OperatingSystem.IsAndroidVersionAtLeast(30)
+            ? activeArray
+            : GetZoomCropRegion(_effectiveControls?.ZoomFactor ?? 1) ?? activeArray;
+        var regionWidth = Math.Max(1, bounds.Width() / 10);
+        var regionHeight = Math.Max(1, bounds.Height() / 10);
+        var centerX = bounds.Left + (int)Math.Round(sensorPoint.X * bounds.Width());
+        var centerY = bounds.Top + (int)Math.Round(sensorPoint.Y * bounds.Height());
+        var left = Math.Clamp(centerX - regionWidth / 2, bounds.Left, bounds.Right - regionWidth);
+        var top = Math.Clamp(centerY - regionHeight / 2, bounds.Top, bounds.Bottom - regionHeight);
+        return new MeteringRectangle(
+            new Rect(left, top, left + regionWidth, top + regionHeight),
+            MeteringRectangle.MeteringWeightMax);
+    }
+
     private void OnCaptureSessionConfigured(CameraCaptureSession session)
     {
         DisposeSessionConfiguration();
@@ -551,11 +879,9 @@ public sealed class NativeCameraView : FrameLayout
         _previewSession = session;
         try
         {
-            _previewSession.SetRepeatingRequest(
-                _previewBuilder.Build(),
-                null,
-                _backgroundHandler);
+            SubmitControlRequest(true);
             _configurationSelected?.Invoke(_effectiveConfiguration);
+            _controlsSelected?.Invoke(_effectiveControls);
             _captureStarted?.Invoke();
         }
         catch (CameraAccessException exception)
@@ -564,6 +890,18 @@ public sealed class NativeCameraView : FrameLayout
             _previewSession.Dispose();
             _previewSession = null;
             ReportFailure(MapCameraAccessException(exception));
+        }
+        catch (System.Exception exception)
+        {
+            _previewSession.Close();
+            _previewSession.Dispose();
+            _previewSession = null;
+            ReportFailure(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                "Android could not start the preview with the selected camera controls.",
+                true,
+                exception.GetType().Name,
+                exception));
         }
     }
 
@@ -589,7 +927,7 @@ public sealed class NativeCameraView : FrameLayout
         }
 
         _cameraDevice = cameraDevice;
-        StartPreview();
+        TryStartPreview();
     }
 
     private void OnCameraClosed(CameraDevice cameraDevice)
@@ -772,13 +1110,16 @@ public sealed class NativeCameraView : FrameLayout
             _previewSize.Height,
             sensorValue?.IntValue() ?? 0,
             GetDisplayRotationDegrees(rotation),
-            facingValue?.IntValue() == (int)LensFacing.Front);
+            facingValue?.IntValue() == (int)LensFacing.Front,
+            _effectiveControls?.IsPreviewMirrored == true);
 
         var centerX = viewWidth / 2f;
         var centerY = viewHeight / 2f;
         var matrix = new Matrix();
         matrix.SetScale(transform.ScaleX, transform.ScaleY, centerX, centerY);
         matrix.PostRotate(transform.RotationDegrees, centerX, centerY);
+        if (transform.IsMirrored)
+            matrix.PostScale(-1, 1, centerX, centerY);
         _textureView.SetTransform(matrix);
     }
 
@@ -932,7 +1273,7 @@ public sealed class NativeCameraView : FrameLayout
         public void OnSurfaceTextureAvailable(SurfaceTexture surface, int width, int height)
         {
             owner.ConfigureTransform(width, height);
-            owner.StartPreview();
+            owner.TryStartPreview();
         }
 
         public bool OnSurfaceTextureDestroyed(SurfaceTexture surface) => true;

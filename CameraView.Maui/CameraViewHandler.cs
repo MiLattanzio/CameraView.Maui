@@ -8,6 +8,7 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
     private readonly SemaphoreSlim _configurationLock = new(1, 1);
     private Window _window;
     private int _configurationVersion;
+    private int _controlVersion;
     private bool _isLoaded;
     private bool _isWindowActive = true;
 
@@ -17,7 +18,8 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             [nameof(CameraView.Camera)] = MapConfiguration,
             [nameof(CameraView.Orientation)] = MapConfiguration,
             [nameof(CameraView.Enabled)] = MapConfiguration,
-            [nameof(CameraView.CaptureOptions)] = MapConfiguration
+            [nameof(CameraView.CaptureOptions)] = MapConfiguration,
+            [nameof(CameraView.ControlOptions)] = MapControls
         };
 
     public CameraViewHandler() : base(Mapper)
@@ -51,6 +53,9 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
 
     private static void MapConfiguration(CameraViewHandler handler, CameraView view) =>
         handler.ApplyConfiguration();
+
+    private static void MapControls(CameraViewHandler handler, CameraView view) =>
+        handler.ApplyControls();
 
     private void OnVirtualViewLoaded(object sender, EventArgs eventArgs)
     {
@@ -101,13 +106,17 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
     private void SuspendConfiguration(CameraState state)
     {
         Interlocked.Increment(ref _configurationVersion);
+        Interlocked.Increment(ref _controlVersion);
         PlatformView?.Stop();
 
         var cameraView = VirtualView;
         if (cameraView is not null)
         {
             if (state == CameraState.Stopped)
+            {
                 cameraView.SetEffectiveConfiguration(null);
+                cameraView.SetEffectiveControls(null);
+            }
             cameraView.SetCameraState(cameraView.Enabled ? state : CameraState.Stopped);
         }
     }
@@ -120,8 +129,10 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             return;
 
         var version = Interlocked.Increment(ref _configurationVersion);
+        Interlocked.Increment(ref _controlVersion);
         platformView.Stop();
         cameraView.SetEffectiveConfiguration(null);
+        cameraView.SetEffectiveControls(null);
 
         if (!cameraView.Enabled)
         {
@@ -174,8 +185,11 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
 
             var captureOptions = cameraView.CaptureOptions;
             captureOptions.Validate();
+            var controlOptions = cameraView.ControlOptions;
+            controlOptions.Validate();
             var selectedCamera = cameraView.Camera;
             var selectedOrientation = cameraView.Orientation;
+            var controlVersion = Volatile.Read(ref _controlVersion);
 
             platformView.Start(
                 selectedCamera,
@@ -194,11 +208,18 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
                         rotationDegrees,
                         isMirrored),
                 captureOptions,
+                controlOptions,
                 configuration => DispatchEffectiveConfiguration(
                     platformView,
                     cameraView,
                     version,
                     configuration),
+                controls => DispatchEffectiveControls(
+                    platformView,
+                    cameraView,
+                    version,
+                    controlVersion,
+                    controls),
                 () => DispatchState(
                     platformView,
                     cameraView,
@@ -245,6 +266,37 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
         }
     }
 
+    private void ApplyControls()
+    {
+        var platformView = PlatformView;
+        var cameraView = VirtualView;
+        if (platformView is null || cameraView is null)
+            return;
+
+        var options = cameraView.ControlOptions;
+        options.Validate();
+        var controlVersion = Interlocked.Increment(ref _controlVersion);
+        var configurationVersion = Volatile.Read(ref _configurationVersion);
+
+        if (!cameraView.Enabled || !_isLoaded || !_isWindowActive)
+            return;
+
+        platformView.UpdateControls(
+            options,
+            controls => DispatchEffectiveControls(
+                platformView,
+                cameraView,
+                configurationVersion,
+                controlVersion,
+                controls),
+            failure => DispatchControlFailure(
+                platformView,
+                cameraView,
+                configurationVersion,
+                controlVersion,
+                failure));
+    }
+
     private void DispatchState(
         NativeCameraView platformView,
         CameraView cameraView,
@@ -267,6 +319,40 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
                 cameraView.SetEffectiveConfiguration(configuration);
         });
 
+    private void DispatchEffectiveControls(
+        NativeCameraView platformView,
+        CameraView cameraView,
+        int configurationVersion,
+        int controlVersion,
+        CameraControlState controls) =>
+        Dispatch(cameraView, () =>
+        {
+            if (IsCurrentConfiguration(platformView, cameraView, configurationVersion) &&
+                controlVersion == Volatile.Read(ref _controlVersion))
+            {
+                cameraView.SetEffectiveControls(controls);
+            }
+        });
+
+    private void DispatchControlFailure(
+        NativeCameraView platformView,
+        CameraView cameraView,
+        int configurationVersion,
+        int controlVersion,
+        CameraFailure failure) =>
+        Dispatch(cameraView, () =>
+        {
+            if (!IsCurrentConfiguration(platformView, cameraView, configurationVersion) ||
+                controlVersion != Volatile.Read(ref _controlVersion))
+            {
+                return;
+            }
+
+            cameraView.ReportCameraError(failure);
+            Debug.WriteLine(
+                $"Camera control failure {failure.Code} ({failure.PlatformCode}): {failure.Message} {failure.Exception}");
+        });
+
     private void DispatchFailure(
         NativeCameraView platformView,
         CameraView cameraView,
@@ -281,6 +367,7 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             Interlocked.Increment(ref _configurationVersion);
             platformView.Stop();
             cameraView.SetEffectiveConfiguration(null);
+            cameraView.SetEffectiveControls(null);
             cameraView.ReportCameraFailure(state, failure);
             Debug.WriteLine(
                 $"Camera failure {failure.Code} ({failure.PlatformCode}): {failure.Message} {failure.Exception}");

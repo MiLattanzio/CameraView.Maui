@@ -149,7 +149,61 @@ private async void OnFrameAvailable(object? sender, CameraFrameEventArgs args)
 
 Do not retain an unbounded number of frames. `Latest` delivery prioritizes the newest camera buffer, while `MaxOutstandingFrames` limits native memory pressure. Read `EffectiveConfiguration.FrameFormat`, `NativeFrameRate`, and `Capabilities` to see what the selected camera actually supports.
 
-## 7. Observe camera state and errors
+## 7. Configure interactive controls
+
+Replace `ControlOptions` to update controls without restarting the preview:
+
+```csharp
+CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+{
+    ZoomFactor = 2,
+    TorchEnabled = true,
+    ExposureCompensation = 0.5,
+    FocusMode = CameraFocusMode.Continuous,
+    PreviewMirroring = CameraPreviewMirroringMode.Automatic
+};
+```
+
+Use a normalized point for tap-to-focus:
+
+```csharp
+private void OnPreviewTapped(object sender, TappedEventArgs args)
+{
+    var position = args.GetPosition(CameraPreview);
+    if (!position.HasValue || CameraPreview.Width <= 0 || CameraPreview.Height <= 0)
+        return;
+
+    CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+    {
+        FocusMode = CameraFocusMode.Single,
+        FocusPoint = new CameraPoint(
+            Math.Clamp(position.Value.X / CameraPreview.Width, 0, 1),
+            Math.Clamp(position.Value.Y / CameraPreview.Height, 0, 1))
+    };
+}
+```
+
+Read `EffectiveControls` before enabling UI controls. Requests are portable across cameras: unsupported torch/focus modes fall back, while zoom and exposure are clamped to the selected device.
+
+```csharp
+CameraPreview.EffectiveControlsChanged += (_, args) =>
+{
+    if (args.State is not { } controls)
+        return;
+
+    ZoomSlider.Minimum = controls.Capabilities.MinimumZoomFactor;
+    ZoomSlider.Maximum = controls.Capabilities.MaximumZoomFactor;
+    ZoomSlider.IsEnabled = controls.Capabilities.IsZoomSupported;
+    TorchButton.IsEnabled = controls.Capabilities.IsTorchSupported;
+    ExposureSlider.Minimum = controls.Capabilities.MinimumExposureCompensation;
+    ExposureSlider.Maximum = controls.Capabilities.MaximumExposureCompensation;
+    ExposureSlider.IsEnabled = controls.Capabilities.SupportsExposureCompensation;
+};
+```
+
+`PreviewMirroring` affects only the preview. Inspect `CameraFrame.IsMirrored` when processing or displaying delivered frames.
+
+## 8. Observe camera state and errors
 
 `StateChanged` and `ErrorOccurred` run through the MAUI dispatcher, so their handlers can update page controls directly:
 

@@ -1,6 +1,6 @@
 # CameraView.Maui
 
-CameraView.Maui is a .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation and emits encoded JPEG frames or zero-copy native camera buffers.
+CameraView.Maui is a .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation, emits encoded JPEG frames or zero-copy native camera buffers, and exposes live zoom, torch, focus, exposure, and preview-mirroring controls.
 
 The package supports .NET 9 and .NET 10 MAUI applications.
 
@@ -193,6 +193,44 @@ CameraPreview.EffectiveConfigurationChanged += (_, args) =>
 ```
 
 Use `Closest`, `AtMost`, or `AtLeast` for deterministic fallback. `Exact` fails with `SessionConfigurationFailed` when the device does not expose the requested size. `CameraCaptureOptions.Default` retains the platform JPEG default and 720p-or-lower selection used by 1.0.
+
+## Interactive controls
+
+Control changes update the active native request/device without restarting capture:
+
+```csharp
+CameraPreview.ControlOptions = CameraPreview.ControlOptions with
+{
+    ZoomFactor = 2,
+    TorchEnabled = true,
+    ExposureCompensation = 0.5,
+    FocusMode = CameraFocusMode.Single,
+    FocusPoint = new CameraPoint(0.4, 0.6),
+    PreviewMirroring = CameraPreviewMirroringMode.Automatic
+};
+```
+
+`CameraPoint` is normalized against the visible preview from top-left `(0,0)` to bottom-right `(1,1)`. Use `Single` for tap-to-focus and reset to `Continuous` with a `null` point for centered continuous autofocus.
+
+Subscribe to `EffectiveControlsChanged` to configure UI from the selected camera's actual capabilities and applied values:
+
+```csharp
+CameraPreview.EffectiveControlsChanged += (_, args) =>
+{
+    if (args.State is not { } controls)
+        return;
+
+    ZoomSlider.Minimum = controls.Capabilities.MinimumZoomFactor;
+    ZoomSlider.Maximum = controls.Capabilities.MaximumZoomFactor;
+    ZoomSlider.IsEnabled = controls.Capabilities.IsZoomSupported;
+    TorchButton.IsEnabled = controls.Capabilities.IsTorchSupported;
+    ZoomSlider.Value = controls.ZoomFactor;
+};
+```
+
+Zoom and exposure are clamped, Android exposure can be quantized to a native step, and unsupported torch/focus requests fall back without stopping capture. Inspect the `Used*Fallback` flags. Options survive camera switching and resume and are renegotiated for the active camera.
+
+`PreviewMirroring` changes only the preview. Inspect `CameraFrame.IsMirrored` for delivered output.
 
 ## Permissions
 

@@ -143,6 +143,88 @@ if (!capabilities.SupportsFrameFormat(CameraFrameFormat.Native) ||
     throw new InvalidOperationException("Camera capability queries are inconsistent.");
 }
 
+var controlCapabilities = new CameraControlCapabilities(
+    0.5,
+    4,
+    false,
+    true,
+    [CameraFocusMode.Continuous],
+    -2,
+    2,
+    0.5);
+var requestedControls = new CameraControlOptions
+{
+    ZoomFactor = 10,
+    TorchEnabled = true,
+    FocusMode = CameraFocusMode.Single,
+    FocusPoint = new CameraPoint(0.25, 0.75),
+    ExposureCompensation = 1.3
+};
+var effectiveControls = CameraControlNegotiator.Negotiate(
+    requestedControls,
+    controlCapabilities,
+    CameraOptions.Rear);
+if (!controlCapabilities.IsZoomSupported)
+    throw new InvalidOperationException("A non-degenerate native zoom range must report zoom support.");
+AssertCloseDouble(4, effectiveControls.ZoomFactor, "Zoom must be clamped to the device maximum.");
+AssertCloseDouble(1.5, effectiveControls.ExposureCompensation, "Exposure must be quantized to the native step.");
+if (effectiveControls.TorchEnabled ||
+    effectiveControls.FocusMode != CameraFocusMode.Continuous ||
+    effectiveControls.FocusPoint != requestedControls.FocusPoint ||
+    effectiveControls.IsPreviewMirrored ||
+    !effectiveControls.UsedZoomFallback ||
+    !effectiveControls.UsedTorchFallback ||
+    !effectiveControls.UsedFocusFallback ||
+    !effectiveControls.UsedExposureFallback)
+{
+    throw new InvalidOperationException("Camera control fallback reporting is inconsistent.");
+}
+
+var frontControls = CameraControlNegotiator.Negotiate(
+    CameraControlOptions.Default,
+    controlCapabilities,
+    CameraOptions.Front);
+if (!frontControls.IsPreviewMirrored)
+    throw new InvalidOperationException("Automatic preview mirroring must mirror the front camera.");
+var unmirroredFrontControls = CameraControlNegotiator.Negotiate(
+    CameraControlOptions.Default with
+    {
+        PreviewMirroring = CameraPreviewMirroringMode.Unmirrored
+    },
+    controlCapabilities,
+    CameraOptions.Front);
+if (unmirroredFrontControls.IsPreviewMirrored)
+    throw new InvalidOperationException("Explicit unmirrored preview mode must override the front-camera default.");
+
+var mappedPoint = CameraControlPointMapper.ToSensorPoint(
+    new CameraPoint(0.2, 0.3),
+    90,
+    false);
+AssertCloseDouble(0.3, mappedPoint.X, "A 90-degree preview point must map X to sensor Y.");
+AssertCloseDouble(0.8, mappedPoint.Y, "A 90-degree preview point must invert sensor Y.");
+var mirroredPoint = CameraControlPointMapper.ToSensorPoint(
+    new CameraPoint(0.2, 0.3),
+    0,
+    true);
+AssertCloseDouble(0.8, mirroredPoint.X, "Preview mirroring must be undone before sensor mapping.");
+var croppedPoint = CameraControlPointMapper.ToSensorPoint(
+    new CameraPoint(0, 0.5),
+    1000,
+    1000,
+    1920,
+    1080,
+    0,
+    false);
+AssertCloseDouble(0.21875, croppedPoint.X, "Aspect-fill cropping must be included in focus-point mapping.");
+AssertCloseDouble(0.5, croppedPoint.Y, "Centered aspect-fill coordinates must remain centered.");
+
+ExpectControlOutOfRange(
+    new CameraControlOptions { ZoomFactor = 0 },
+    "Non-positive zoom must be rejected.");
+ExpectControlOutOfRange(
+    new CameraControlOptions { ExposureCompensation = double.NaN },
+    "Non-finite exposure compensation must be rejected.");
+
 var trackedBuffer = new TrackingFrameBuffer([1, 2, 3, 4]);
 var borrowedFrame = new CameraFrame(
     trackedBuffer,
@@ -214,7 +296,19 @@ AssertClose(3f / 5f, landscapeTransform.ScaleX, "Landscape X correction is incor
 AssertClose(16f / 9f, landscapeTransform.ScaleY, "Landscape Y correction is incorrect.");
 AssertClose(-90f, landscapeTransform.RotationDegrees, "Landscape display rotation is incorrect.");
 
-Console.WriteLine("Validated capture options, frame rates, resolution negotiation, and preview transforms.");
+var mirroredTransform = CameraPreviewTransformCalculator.Calculate(
+    1080,
+    1800,
+    1920,
+    1080,
+    90,
+    0,
+    true,
+    true);
+if (!mirroredTransform.IsMirrored || mirroredTransform.ScaleX <= 0)
+    throw new InvalidOperationException("A mirrored preview must preserve scale and request a final horizontal flip.");
+
+Console.WriteLine("Validated capture options, interactive controls, frame rates, resolution negotiation, and preview transforms.");
 
 static void AssertResolution(
     CameraResolution expected,
@@ -229,6 +323,20 @@ static void AssertResolution(
 }
 
 static void ExpectOutOfRange(CameraCaptureOptions options, string message)
+{
+    try
+    {
+        options.Validate();
+    }
+    catch (ArgumentOutOfRangeException)
+    {
+        return;
+    }
+
+    throw new InvalidOperationException(message);
+}
+
+static void ExpectControlOutOfRange(CameraControlOptions options, string message)
 {
     try
     {
@@ -263,6 +371,15 @@ static void AssertFrameRateRange(
 static void AssertClose(float expected, float actual, string message)
 {
     if (Math.Abs(expected - actual) > 0.0001f)
+    {
+        throw new InvalidOperationException(
+            $"{message} Expected {expected}, actual {actual}.");
+    }
+}
+
+static void AssertCloseDouble(double expected, double actual, string message)
+{
+    if (Math.Abs(expected - actual) > 0.0001)
     {
         throw new InvalidOperationException(
             $"{message} Expected {expected}, actual {actual}.");

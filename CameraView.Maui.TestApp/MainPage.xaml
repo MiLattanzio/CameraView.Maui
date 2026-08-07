@@ -11,7 +11,11 @@
                            Camera="Rear"
                            Orientation="Portrait"
                            HorizontalOptions="Fill"
-                           VerticalOptions="Fill" />
+                           VerticalOptions="Fill">
+            <camera:CameraView.GestureRecognizers>
+                <TapGestureRecognizer Tapped="OnPreviewTapped" />
+            </camera:CameraView.GestureRecognizers>
+        </camera:CameraView>
 
         <Border Grid.Row="1"
                 BackgroundColor="#E6191919"
@@ -31,6 +35,12 @@
 
                 <Label x:Name="ConfigurationLabel"
                        Text="Configurazione: in attesa"
+                       FontSize="12"
+                       TextColor="#FFBDBDBD"
+                       HorizontalTextAlignment="Center" />
+
+                <Label x:Name="ControlsLabel"
+                       Text="Controlli: in attesa"
                        FontSize="12"
                        TextColor="#FFBDBDBD"
                        HorizontalTextAlignment="Center" />
@@ -75,6 +85,56 @@
                             Text="Raw"
                             CommandParameter="Realtime"
                             Clicked="OnCaptureProfileClicked" />
+                </Grid>
+
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                    <Label Grid.Column="0"
+                           Text="Zoom"
+                           TextColor="White"
+                           VerticalTextAlignment="Center" />
+                    <Slider x:Name="ZoomSlider"
+                            Grid.Column="1"
+                            Minimum="1"
+                            Maximum="1"
+                            Value="1"
+                            ValueChanged="OnZoomChanged" />
+                    <Label x:Name="ZoomLabel"
+                           Grid.Column="2"
+                           Text="1.00x"
+                           TextColor="White"
+                           VerticalTextAlignment="Center" />
+                </Grid>
+
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                    <Label Grid.Column="0"
+                           Text="EV"
+                           TextColor="White"
+                           VerticalTextAlignment="Center" />
+                    <Slider x:Name="ExposureSlider"
+                            Grid.Column="1"
+                            Minimum="0"
+                            Maximum="0"
+                            Value="0"
+                            ValueChanged="OnExposureChanged" />
+                    <Label x:Name="ExposureLabel"
+                           Grid.Column="2"
+                           Text="0.00"
+                           TextColor="White"
+                           VerticalTextAlignment="Center" />
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                    <Button x:Name="TorchButton"
+                            Grid.Column="0"
+                            Text="Torcia: off"
+                            Clicked="OnToggleTorchClicked" />
+                    <Button Grid.Column="1"
+                            Text="Focus auto"
+                            Clicked="OnResetFocusClicked" />
+                    <Button x:Name="MirroringButton"
+                            Grid.Column="2"
+                            Text="Mirror: auto"
+                            Clicked="OnToggleMirroringClicked" />
                 </Grid>
             </VerticalStackLayout>
         </Border>

@@ -24,6 +24,14 @@ public static class PackageConsumer
                 MaximumFrameRate = 12.5,
                 MinimumFrameInterval = TimeSpan.FromMilliseconds(50)
             },
+            ControlOptions = CameraControlOptions.Default with
+            {
+                ZoomFactor = 1.5,
+                FocusMode = CameraFocusMode.Continuous,
+                FocusPoint = CameraPoint.Center,
+                ExposureCompensation = 0,
+                PreviewMirroring = CameraPreviewMirroringMode.Automatic
+            },
             Enabled = true
         };
 
@@ -102,10 +110,36 @@ public static class PackageConsumer
             _ = eventArgs.Configuration?.Capabilities.FrameRateRanges;
             _ = eventArgs.Configuration?.Capabilities.MaximumFrameRate;
         };
+        preview.EffectiveControlsChanged += (_, eventArgs) =>
+        {
+            _ = eventArgs.PreviousState;
+            _ = eventArgs.State?.RequestedOptions;
+            _ = eventArgs.State?.ZoomFactor;
+            _ = eventArgs.State?.TorchEnabled;
+            _ = eventArgs.State?.FocusMode;
+            _ = eventArgs.State?.FocusPoint;
+            _ = eventArgs.State?.ExposureCompensation;
+            _ = eventArgs.State?.IsPreviewMirrored;
+            _ = eventArgs.State?.UsedZoomFallback;
+            _ = eventArgs.State?.UsedTorchFallback;
+            _ = eventArgs.State?.UsedFocusFallback;
+            _ = eventArgs.State?.UsedExposureFallback;
+            _ = eventArgs.State?.Capabilities.MinimumZoomFactor;
+            _ = eventArgs.State?.Capabilities.MaximumZoomFactor;
+            _ = eventArgs.State?.Capabilities.IsZoomSupported;
+            _ = eventArgs.State?.Capabilities.IsTorchSupported;
+            _ = eventArgs.State?.Capabilities.IsFocusPointSupported;
+            _ = eventArgs.State?.Capabilities.SupportedFocusModes;
+            _ = eventArgs.State?.Capabilities.MinimumExposureCompensation;
+            _ = eventArgs.State?.Capabilities.MaximumExposureCompensation;
+            _ = eventArgs.State?.Capabilities.ExposureCompensationStep;
+            _ = eventArgs.State?.Capabilities.SupportsExposureCompensation;
+        };
 
         _ = preview.State;
         _ = preview.IsRunning;
         _ = preview.EffectiveConfiguration;
+        _ = preview.EffectiveControls;
 
         return preview;
     }

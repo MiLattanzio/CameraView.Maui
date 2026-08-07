@@ -106,7 +106,7 @@ jobs:
           --nologo
           -p:ContinuousIntegrationBuild=true
 
-      - name: Test capture configuration
+      - name: Test capture configuration and controls
         run: >-
           dotnet run
           --project tests/CameraView.Maui.ConfigurationTests/CameraView.Maui.ConfigurationTests.csproj

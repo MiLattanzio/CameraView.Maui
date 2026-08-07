@@ -15,7 +15,7 @@ CameraPreview.ErrorOccurred += (_, args) =>
         $"recoverable={args.IsRecoverable}; {args.Message}; {args.Exception}");
 ```
 
-`PermissionDenied` requires a permission/settings change. `CameraInUse` means another session must release the camera. `CameraUnavailable`, `DeviceDisconnected`, and `SessionConfigurationFailed` usually require a lifecycle retry, camera switch, or device-level investigation. `CaptureFailed` identifies a failure after the session started.
+`PermissionDenied` requires a permission/settings change. `CameraInUse` means another session must release the camera. `CameraUnavailable`, `DeviceDisconnected`, and `SessionConfigurationFailed` usually require a lifecycle retry, camera switch, or device-level investigation. `CaptureFailed` identifies a frame failure after the session started. `ControlConfigurationFailed` identifies a native failure while applying interactive controls and does not stop an otherwise healthy session.
 
 ## The preview is black
 
@@ -75,6 +75,20 @@ Subscribe to `EffectiveConfigurationChanged` and inspect `CaptureResolution`, `P
 - `Exact` never falls back; an unavailable size produces `SessionConfigurationFailed` with platform code `ExactResolutionUnavailable`.
 
 Use `CameraCaptureOptions.Default` to rule out a device-specific high-resolution combination. Configuration changes must replace `CaptureOptions`; its immutable properties cannot be changed in place.
+
+## Zoom, torch, focus, or exposure is not applied exactly
+
+Subscribe to `EffectiveControlsChanged` and inspect the effective values, capability ranges, and `Used*Fallback` flags. `ControlOptions` represents a portable request, not a promise that every front/rear camera supports the same controls.
+
+- Zoom and exposure requests are clamped to the active camera's native range.
+- Android exposure is quantized to `ExposureCompensationStep` when the device reports one.
+- Torch falls back to off on cameras without a supported flash unit, commonly the front camera.
+- A requested focus mode falls back to another supported mode; `FocusMode` is `null` when the camera exposes no supported autofocus mode.
+- A focus point falls back to `null` when native metering points are unavailable.
+
+Control changes normally update the active session without a black preview or state restart. They are retained when switching camera or resuming, then renegotiated against the new camera. If `ControlConfigurationFailed` is raised, log `PlatformCode` and the requested/effective values before retrying.
+
+`PreviewMirroring` changes only what the user sees. It does not promise mirrored encoded/raw data; inspect `CameraFrame.IsMirrored` and apply the required transform in your processor or renderer.
 
 ## UI updates throw or behave inconsistently
 
