@@ -6,11 +6,37 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-07
+
+### Added
+
+- Atomic immutable `CameraCaptureOptions` with reusable low-bandwidth, balanced, and high-quality profiles.
+- Preset and arbitrary capture resolutions with `Closest`, `AtMost`, `AtLeast`, and `Exact` selection policies.
+- Optional JPEG quality plus combinable fractional maximum-frame-rate and minimum-frame-interval limits.
+- Effective capture/preview configuration snapshots, fallback detection, and change notifications.
+- Deterministic tests for capture negotiation and Android preview transformations.
+
+### Changed
+
+- A complete capture configuration now causes one native restart and is retained across resume.
+- Resolution fallback considers both aspect ratio and pixel count instead of pixel count alone.
+- The default leaves Android JPEG quality to the platform and preserves the 1.0 720p-or-lower behavior.
+- Android selects a preview size matching the capture aspect ratio; iOS selects an actual device format instead of assuming preset dimensions.
+- Frame throttling uses the strictest requested interval and drops before managed delivery without creating a queue.
+- Package compatibility is checked against the previous public version 1.1.0.
+- The sample app selects one .NET version per platform by default so Rider can deploy it without an ambiguous Android target framework.
+
 ### Fixed
 
+- Restored binary compatibility for the original `CameraResult(byte[])` constructor.
+- Stale native configuration callbacks can no longer overwrite a newer effective configuration.
+- Android drains and closes throttled `ImageReader` frames instead of allowing producer backpressure.
+- Android preview scaling now preserves the camera aspect ratio across all display rotations instead of stretching the image.
 - NuGet publishing now also starts when a GitHub release is published, including releases whose tag is created by GitHub.
 
 ## [1.2.0] - 2026-08-06
+
+The GitHub release was created, but NuGet publishing was blocked by API compatibility validation. The finalized API and fixes are published in 1.2.1.
 
 ### Added
 
@@ -77,7 +103,9 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 - Corrected Android/iOS handler namespace resolution and XAML namespace usage.
 - Camera sessions are released on app deactivation and restored after screen unlock or resume.
 
-[Unreleased]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/MiLattanzio/CameraView.Maui/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/MiLattanzio/CameraView.Maui/releases/tag/v1.0.0

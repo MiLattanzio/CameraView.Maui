@@ -123,6 +123,12 @@ jobs:
           --nologo
           -p:ContinuousIntegrationBuild=true
 
+      - name: Test capture configuration
+        run: >-
+          dotnet run
+          --project tests/CameraView.Maui.ConfigurationTests/CameraView.Maui.ConfigurationTests.csproj
+          --configuration Release
+
       - name: Pack
         run: >-
           dotnet pack CameraView.Maui/CameraView.Maui.csproj

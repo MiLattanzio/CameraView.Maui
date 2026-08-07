@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net9.0-android;net9.0-ios;net10.0-android;net10.0-ios</TargetFrameworks>
+    <TestAppDotNetVersion Condition="'$(TestAppDotNetVersion)' == ''">10.0</TestAppDotNetVersion>
+    <TargetFrameworks>net$(TestAppDotNetVersion)-android;net$(TestAppDotNetVersion)-ios</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <RootNamespace>CameraView.Maui.TestApp</RootNamespace>
     <AssemblyName>CameraView.Maui.TestApp</AssemblyName>

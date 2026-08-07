@@ -7,11 +7,13 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
         typeof(CameraState),
         typeof(CameraView),
         CameraState.Stopped);
-    private static readonly BindablePropertyKey EffectiveConfigurationPropertyKey = BindableProperty.CreateReadOnly(
-        nameof(EffectiveConfiguration),
-        typeof(CameraCaptureConfiguration),
-        typeof(CameraView),
-        null);
+
+    private static readonly BindablePropertyKey EffectiveConfigurationPropertyKey =
+        BindableProperty.CreateReadOnly(
+            nameof(EffectiveConfiguration),
+            typeof(CameraCaptureConfiguration),
+            typeof(CameraView),
+            null);
 
     public static readonly BindableProperty CameraProperty = BindableProperty.Create(
         nameof(Camera),
@@ -31,31 +33,29 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
         typeof(CameraView),
         true);
 
-    public static readonly BindableProperty ResolutionProperty = BindableProperty.Create(
-        nameof(Resolution), typeof(CameraResolution), typeof(CameraView), CameraResolution.Default);
-    public static readonly BindableProperty JpegQualityProperty = BindableProperty.Create(
-        nameof(JpegQuality), typeof(int), typeof(CameraView), 85, propertyChanging: (_, oldValue, newValue) =>
+    public static readonly BindableProperty CaptureOptionsProperty = BindableProperty.Create(
+        nameof(CaptureOptions),
+        typeof(CameraCaptureOptions),
+        typeof(CameraView),
+        CameraCaptureOptions.Default,
+        propertyChanging: (_, _, newValue) =>
         {
-            var value = (int)newValue;
-            if (value is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(JpegQuality));
-        });
-    public static readonly BindableProperty MaximumFrameRateProperty = BindableProperty.Create(
-        nameof(MaximumFrameRate), typeof(int), typeof(CameraView), 0, propertyChanging: (_, oldValue, newValue) =>
-        {
-            if ((int)newValue < 0) throw new ArgumentOutOfRangeException(nameof(MaximumFrameRate));
-        });
-    public static readonly BindableProperty MinimumFrameIntervalProperty = BindableProperty.Create(
-        nameof(MinimumFrameInterval), typeof(TimeSpan), typeof(CameraView), TimeSpan.Zero, propertyChanging: (_, oldValue, newValue) =>
-        {
-            if ((TimeSpan)newValue < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(MinimumFrameInterval));
+            if (newValue is not CameraCaptureOptions options)
+                throw new ArgumentNullException(nameof(CaptureOptions));
+
+            options.Validate();
         });
 
     public static readonly BindableProperty StateProperty = StatePropertyKey.BindableProperty;
-    public static readonly BindableProperty EffectiveConfigurationProperty = EffectiveConfigurationPropertyKey.BindableProperty;
+
+    public static readonly BindableProperty EffectiveConfigurationProperty =
+        EffectiveConfigurationPropertyKey.BindableProperty;
 
     // Keep the original field names for source compatibility with the Xamarin control.
     public static readonly BindableProperty CameraPreview = OrientationProperty;
     public static readonly BindableProperty CameraEnable = EnabledProperty;
+
+    private long _sequenceNumber;
 
     public CameraOptions Camera
     {
@@ -75,11 +75,14 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
         set => SetValue(EnabledProperty, value);
     }
 
-    public CameraResolution Resolution { get => (CameraResolution)GetValue(ResolutionProperty); set => SetValue(ResolutionProperty, value); }
-    public int JpegQuality { get => (int)GetValue(JpegQualityProperty); set => SetValue(JpegQualityProperty, value); }
-    public int MaximumFrameRate { get => (int)GetValue(MaximumFrameRateProperty); set => SetValue(MaximumFrameRateProperty, value); }
-    public TimeSpan MinimumFrameInterval { get => (TimeSpan)GetValue(MinimumFrameIntervalProperty); set => SetValue(MinimumFrameIntervalProperty, value); }
-    public CameraCaptureConfiguration EffectiveConfiguration => (CameraCaptureConfiguration)GetValue(EffectiveConfigurationProperty);
+    public CameraCaptureOptions CaptureOptions
+    {
+        get => (CameraCaptureOptions)GetValue(CaptureOptionsProperty);
+        set => SetValue(CaptureOptionsProperty, value);
+    }
+
+    public CameraCaptureConfiguration EffectiveConfiguration =>
+        (CameraCaptureConfiguration)GetValue(EffectiveConfigurationProperty);
 
     public CameraState State => (CameraState)GetValue(StateProperty);
 
@@ -93,24 +96,53 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
 
     public event EventHandler<CameraErrorEventArgs> ErrorOccurred;
 
+    public event EventHandler<CameraCaptureConfigurationChangedEventArgs>
+        EffectiveConfigurationChanged;
+
     public void SetResult(byte[] image)
     {
         if (image is { Length: > 0 })
             InvokeFrameResult(new CameraResult(image));
     }
 
-    internal void SetResult(byte[] image, int width, int height)
+    public void Cancel() => InvokeFrameResult(new CameraResult());
+
+    internal void SetResult(
+        byte[] image,
+        int width,
+        int height,
+        DateTimeOffset timestamp,
+        CameraOrientation orientation,
+        CameraOptions camera,
+        CameraCaptureConfiguration configuration)
     {
-        if (image is not { Length: > 0 }) return;
-        InvokeFrameResult(new CameraResult(image, width, height, DateTimeOffset.UtcNow, Orientation, Camera, Interlocked.Increment(ref _sequenceNumber)));
+        if (image is not { Length: > 0 })
+            return;
+
+        InvokeFrameResult(new CameraResult(
+            image,
+            width,
+            height,
+            timestamp,
+            orientation,
+            camera,
+            Interlocked.Increment(ref _sequenceNumber),
+            configuration));
     }
 
-    private long _sequenceNumber;
+    internal void SetEffectiveConfiguration(CameraCaptureConfiguration configuration)
+    {
+        var previousConfiguration = EffectiveConfiguration;
+        if (ReferenceEquals(previousConfiguration, configuration))
+            return;
 
-    internal void SetEffectiveConfiguration(CameraCaptureConfiguration configuration) =>
         SetValue(EffectiveConfigurationPropertyKey, configuration);
-
-    public void Cancel() => InvokeFrameResult(new CameraResult());
+        InvokeSafely(
+            EffectiveConfigurationChanged,
+            new CameraCaptureConfigurationChangedEventArgs(
+                previousConfiguration,
+                configuration));
+    }
 
     internal void SetCameraState(CameraState state)
     {

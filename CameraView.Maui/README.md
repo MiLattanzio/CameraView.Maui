@@ -151,6 +151,28 @@ CameraPreview.ErrorOccurred += (_, args) =>
 
 `StateChanged` and `ErrorOccurred` run through the MAUI dispatcher. `State` can be `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, or `Failed`; `IsRunning` is true only for an active native session. `OnFrameResult` remains on the native capture queue.
 
+## Capture configuration
+
+Apply resolution, quality, and delivery-rate changes together:
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Balanced with
+{
+    PreferredResolution = new CameraResolution(1600, 1200),
+    ResolutionSelectionMode = CameraResolutionSelectionMode.AtMost,
+    JpegQuality = 82,
+    MaximumFrameRate = 12.5
+};
+
+CameraPreview.EffectiveConfigurationChanged += (_, args) =>
+{
+    if (args.Configuration is { } selected)
+        StatusLabel.Text = $"{selected.CaptureResolution}";
+};
+```
+
+Use `Closest`, `AtMost`, or `AtLeast` for deterministic fallback. `Exact` fails with `SessionConfigurationFailed` when the device does not expose the requested size. `CameraCaptureOptions.Default` retains the platform JPEG default and 720p-or-lower selection used by 1.0.
+
 ## Permissions
 
 The package contributes `android.permission.CAMERA` and the optional `android.hardware.camera.any` feature to the merged Android manifest.

@@ -16,7 +16,7 @@ public sealed class NativeCameraView : UIView
     private AVCaptureVideoPreviewLayer _previewLayer;
     private AVCaptureVideoDataOutput _videoOutput;
     private VideoCaptureDelegate _captureDelegate;
-    private Action<byte[], int, int> _frameCaptured;
+    private Action<byte[], int, int, DateTimeOffset, CameraCaptureConfiguration> _frameCaptured;
     private Action<CameraCaptureConfiguration> _configurationSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
@@ -26,6 +26,8 @@ public sealed class NativeCameraView : UIView
     private NSObject _interruptionEndedObserver;
     private CameraOptions _cameraOption;
     private CameraOrientation _orientation;
+    private CameraCaptureOptions _captureOptions;
+    private CameraCaptureConfiguration _effectiveConfiguration;
     private bool _isRunning;
     private int _jpegQuality;
     private TimeSpan _minimumFrameInterval;
@@ -41,16 +43,21 @@ public sealed class NativeCameraView : UIView
         CameraOptions cameraOption,
         CameraOrientation orientation,
         Action<byte[]> frameCaptured) =>
-        Start(cameraOption, orientation, (bytes, _, _) => frameCaptured(bytes), CameraResolution.Default, 85, 0, TimeSpan.Zero, null, null, null, null);
+        Start(
+            cameraOption,
+            orientation,
+            (bytes, _, _, _, _) => frameCaptured(bytes),
+            CameraCaptureOptions.Default,
+            null,
+            null,
+            null,
+            null);
 
     internal void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[], int, int> frameCaptured,
-        CameraResolution resolution,
-        int jpegQuality,
-        int maximumFrameRate,
-        TimeSpan minimumFrameInterval,
+        Action<byte[], int, int, DateTimeOffset, CameraCaptureConfiguration> frameCaptured,
+        CameraCaptureOptions captureOptions,
         Action<CameraCaptureConfiguration> configurationSelected,
         Action captureStarted,
         Action captureSuspended,
@@ -58,7 +65,8 @@ public sealed class NativeCameraView : UIView
     {
         if (_isRunning &&
             _cameraOption == cameraOption &&
-            _orientation == orientation)
+            _orientation == orientation &&
+            Equals(_captureOptions, captureOptions))
         {
             _frameCaptured = frameCaptured;
             _captureStarted = captureStarted;
@@ -72,39 +80,42 @@ public sealed class NativeCameraView : UIView
 
         _cameraOption = cameraOption;
         _orientation = orientation;
+        _captureOptions = captureOptions;
         _frameCaptured = frameCaptured;
         _captureStarted = captureStarted;
         _captureSuspended = captureSuspended;
         _captureFailed = captureFailed;
         _configurationSelected = configurationSelected;
-        _jpegQuality = jpegQuality;
-        _minimumFrameInterval = maximumFrameRate > 0
-            ? TimeSpan.FromSeconds(1d / maximumFrameRate)
-            : minimumFrameInterval;
+        _jpegQuality = captureOptions.JpegQuality ?? 85;
+        _minimumFrameInterval = captureOptions.GetEffectiveMinimumFrameInterval();
 
         try
         {
-            _captureSession = new AVCaptureSession { SessionPreset = GetSessionPreset(resolution) };
+            _captureSession = new AVCaptureSession
+            {
+                SessionPreset = AVCaptureSession.PresetInputPriority
+            };
 
             _captureSession.BeginConfiguration();
+            CameraResolution captureResolution;
             try
             {
-                ConfigureInput(cameraOption);
+                captureResolution = ConfigureInput(
+                    cameraOption,
+                    captureOptions);
                 ConfigureOutput();
             }
             finally
             {
-            _captureSession.CommitConfiguration();
+                _captureSession.CommitConfiguration();
             }
 
-            var dimensions = resolution switch
-            {
-                CameraResolution.Qvga => new CoreMedia.CMVideoDimensions(352, 288),
-                CameraResolution.Vga => new CoreMedia.CMVideoDimensions(640, 480),
-                CameraResolution.Hd1080p => new CoreMedia.CMVideoDimensions(1920, 1080),
-                _ => new CoreMedia.CMVideoDimensions(1280, 720)
-            };
-            _configurationSelected?.Invoke(new CameraCaptureConfiguration(dimensions.Width, dimensions.Height, jpegQuality, maximumFrameRate, minimumFrameInterval));
+            _effectiveConfiguration = new CameraCaptureConfiguration(
+                captureOptions,
+                captureResolution,
+                captureResolution,
+                _jpegQuality,
+                _minimumFrameInterval);
 
             _previewLayer = new AVCaptureVideoPreviewLayer(_captureSession)
             {
@@ -126,6 +137,7 @@ public sealed class NativeCameraView : UIView
                     "SessionNotRunning"));
             }
 
+            _configurationSelected?.Invoke(_effectiveConfiguration);
             _captureStarted?.Invoke();
         }
         catch (CameraPlatformException)
@@ -153,6 +165,8 @@ public sealed class NativeCameraView : UIView
         _captureSuspended = null;
         _captureFailed = null;
         _configurationSelected = null;
+        _captureOptions = null;
+        _effectiveConfiguration = null;
 
         DisposeSessionObservers();
 
@@ -183,7 +197,9 @@ public sealed class NativeCameraView : UIView
         base.Dispose(disposing);
     }
 
-    private void ConfigureInput(CameraOptions cameraOption)
+    private CameraResolution ConfigureInput(
+            CameraOptions cameraOption,
+            CameraCaptureOptions captureOptions)
     {
         var position = cameraOption == CameraOptions.Front
             ? AVCaptureDevicePosition.Front
@@ -198,14 +214,7 @@ public sealed class NativeCameraView : UIView
                 false,
                 "CameraNotFound"));
 
-        NSError configurationError = null;
-        if (device.IsFocusModeSupported(AVCaptureFocusMode.ContinuousAutoFocus) &&
-            device.LockForConfiguration(out configurationError))
-        {
-            device.FocusMode = AVCaptureFocusMode.ContinuousAutoFocus;
-            device.UnlockForConfiguration();
-        }
-        configurationError?.Dispose();
+        var deviceConfiguration = ConfigureDevice(device, captureOptions);
 
         var input = AVCaptureDeviceInput.FromDevice(device, out var inputError);
         if (input is null)
@@ -234,15 +243,88 @@ public sealed class NativeCameraView : UIView
         }
 
         _captureSession.AddInput(input);
+        return deviceConfiguration;
+    }
+
+    private CameraResolution ConfigureDevice(
+            AVCaptureDevice device,
+            CameraCaptureOptions captureOptions)
+    {
+        var formats = device.Formats
+            .Select(format => new
+            {
+                Format = format,
+                Description = format.FormatDescription as CMVideoFormatDescription
+            })
+            .Where(candidate => candidate.Description is not null)
+            .Select(candidate => new
+            {
+                candidate.Format,
+                Resolution = new CameraResolution(
+                    candidate.Description.Dimensions.Width,
+                    candidate.Description.Dimensions.Height)
+            })
+            .ToArray();
+
+        var selectedResolution = CameraResolutionSelector.SelectCaptureResolution(
+            formats.Select(candidate => candidate.Resolution),
+            captureOptions);
+        if (selectedResolution is null)
+        {
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                $"The requested exact resolution {captureOptions.PreferredResolution} is unavailable.",
+                false,
+                "ExactResolutionUnavailable"));
+        }
+
+        var selectedFormat = formats
+            .Where(candidate => candidate.Resolution == selectedResolution.Value)
+            .Select(candidate => candidate.Format)
+            .First();
+
+        if (!device.LockForConfiguration(out var configurationError))
+        {
+            var message = configurationError?.LocalizedDescription ??
+                          "The camera device could not be configured.";
+            configurationError?.Dispose();
+            throw new CameraPlatformException(new CameraFailure(
+                CameraErrorCode.SessionConfigurationFailed,
+                message,
+                true,
+                "DeviceConfigurationLockFailed"));
+        }
+
+        try
+        {
+            device.ActiveFormat = selectedFormat;
+
+            if (device.IsFocusModeSupported(AVCaptureFocusMode.ContinuousAutoFocus))
+                device.FocusMode = AVCaptureFocusMode.ContinuousAutoFocus;
+        }
+        finally
+        {
+            device.UnlockForConfiguration();
+            configurationError?.Dispose();
+        }
+
+        return selectedResolution.Value;
     }
 
     private void ConfigureOutput()
     {
         _captureDelegate = new VideoCaptureDelegate(
-            (bytes, width, height) =>
+            (bytes, width, height, timestamp) =>
             {
                 if (_isRunning)
-                    _frameCaptured?.Invoke(bytes, width, height);
+                {
+                    _frameCaptured?.Invoke(
+                        bytes,
+                        width,
+                        height,
+                        timestamp,
+                        _effectiveConfiguration);
+                }
             },
             ReportFailure,
             () => _minimumFrameInterval,
@@ -296,14 +378,6 @@ public sealed class NativeCameraView : UIView
             connection.VideoMirrored = _cameraOption == CameraOptions.Front;
         }
     }
-
-    private static NSString GetSessionPreset(CameraResolution resolution) => resolution switch
-    {
-        CameraResolution.Qvga => AVCaptureSession.Preset352x288,
-        CameraResolution.Vga => AVCaptureSession.Preset640x480,
-        CameraResolution.Hd1080p => AVCaptureSession.Preset1920x1080,
-        _ => AVCaptureSession.Preset1280x720
-    };
 
     private void ObserveSession()
     {
@@ -411,7 +485,7 @@ public sealed class NativeCameraView : UIView
     }
 
     private sealed class VideoCaptureDelegate(
-        Action<byte[], int, int> frameCaptured,
+        Action<byte[], int, int, DateTimeOffset> frameCaptured,
         Action<CameraFailure> captureFailed,
         Func<TimeSpan> minimumFrameInterval,
         Func<int> jpegQuality)
@@ -426,11 +500,12 @@ public sealed class NativeCameraView : UIView
         {
             try
             {
-                if (minimumFrameInterval() > TimeSpan.Zero)
+                var interval = minimumFrameInterval();
+                if (interval > TimeSpan.Zero)
                 {
                     var now = System.Diagnostics.Stopwatch.GetTimestamp();
                     var elapsed = (now - Interlocked.Read(ref _lastFrameTicks)) / (double)System.Diagnostics.Stopwatch.Frequency;
-                    if (elapsed < minimumFrameInterval().TotalSeconds) return;
+                    if (elapsed < interval.TotalSeconds) return;
                     Interlocked.Exchange(ref _lastFrameTicks, now);
                 }
                 using var imageBuffer = sampleBuffer.GetImageBuffer();
@@ -448,7 +523,13 @@ public sealed class NativeCameraView : UIView
                 using var uiImage = new UIImage(cgImage);
                 using var imageData = uiImage.AsJPEG(Math.Clamp(jpegQuality() / 100f, 0.01f, 1f));
                 if (imageData is not null)
-                    frameCaptured(imageData.ToArray(), (int)width, (int)height);
+                {
+                    frameCaptured(
+                        imageData.ToArray(),
+                        (int)width,
+                        (int)height,
+                        DateTimeOffset.UtcNow);
+                }
             }
             catch (System.Exception exception)
             {

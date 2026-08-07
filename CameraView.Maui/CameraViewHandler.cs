@@ -17,10 +17,7 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             [nameof(CameraView.Camera)] = MapConfiguration,
             [nameof(CameraView.Orientation)] = MapConfiguration,
             [nameof(CameraView.Enabled)] = MapConfiguration,
-            [nameof(CameraView.Resolution)] = MapConfiguration,
-            [nameof(CameraView.JpegQuality)] = MapConfiguration,
-            [nameof(CameraView.MaximumFrameRate)] = MapConfiguration,
-            [nameof(CameraView.MinimumFrameInterval)] = MapConfiguration
+            [nameof(CameraView.CaptureOptions)] = MapConfiguration
         };
 
     public CameraViewHandler() : base(Mapper)
@@ -108,7 +105,11 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
 
         var cameraView = VirtualView;
         if (cameraView is not null)
+        {
+            if (state == CameraState.Stopped)
+                cameraView.SetEffectiveConfiguration(null);
             cameraView.SetCameraState(cameraView.Enabled ? state : CameraState.Stopped);
+        }
     }
 
     private void ApplyConfiguration()
@@ -120,6 +121,7 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
 
         var version = Interlocked.Increment(ref _configurationVersion);
         platformView.Stop();
+        cameraView.SetEffectiveConfiguration(null);
 
         if (!cameraView.Enabled)
         {
@@ -170,15 +172,29 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
                 return;
             }
 
+            var captureOptions = cameraView.CaptureOptions;
+            captureOptions.Validate();
+            var selectedCamera = cameraView.Camera;
+            var selectedOrientation = cameraView.Orientation;
+
             platformView.Start(
-                cameraView.Camera,
-                cameraView.Orientation,
-                cameraView.SetResult,
-                cameraView.Resolution,
-                cameraView.JpegQuality,
-                cameraView.MaximumFrameRate,
-                cameraView.MinimumFrameInterval,
-                configuration => Dispatch(cameraView, () => cameraView.SetEffectiveConfiguration(configuration)),
+                selectedCamera,
+                selectedOrientation,
+                (image, width, height, timestamp, configuration) =>
+                    cameraView.SetResult(
+                        image,
+                        width,
+                        height,
+                        timestamp,
+                        selectedOrientation,
+                        selectedCamera,
+                        configuration),
+                captureOptions,
+                configuration => DispatchEffectiveConfiguration(
+                    platformView,
+                    cameraView,
+                    version,
+                    configuration),
                 () => DispatchState(
                     platformView,
                     cameraView,
@@ -236,6 +252,17 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
                 cameraView.SetCameraState(state);
         });
 
+    private void DispatchEffectiveConfiguration(
+        NativeCameraView platformView,
+        CameraView cameraView,
+        int version,
+        CameraCaptureConfiguration configuration) =>
+        Dispatch(cameraView, () =>
+        {
+            if (IsCurrentConfiguration(platformView, cameraView, version))
+                cameraView.SetEffectiveConfiguration(configuration);
+        });
+
     private void DispatchFailure(
         NativeCameraView platformView,
         CameraView cameraView,
@@ -249,6 +276,7 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
 
             Interlocked.Increment(ref _configurationVersion);
             platformView.Stop();
+            cameraView.SetEffectiveConfiguration(null);
             cameraView.ReportCameraFailure(state, failure);
             Debug.WriteLine(
                 $"Camera failure {failure.Code} ({failure.PlatformCode}): {failure.Message} {failure.Exception}");

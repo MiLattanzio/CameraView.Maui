@@ -62,6 +62,16 @@ The preview and frame output share the same session. Confirm the preview is acti
 
 Frame delivery is intentionally throttled by the native camera and processing capacity; it is not guaranteed to match the sensor's maximum frame rate.
 
+## Requested capture resolution is not selected
+
+Subscribe to `EffectiveConfigurationChanged` and inspect `CaptureResolution`, `PreviewResolution`, and `UsedResolutionFallback`. Device size lists vary by camera position, hardware model, active format, and platform version.
+
+- `Closest` minimizes aspect-ratio and pixel-count differences.
+- `AtMost` and `AtLeast` constrain dimensions first, then fall back to the closest size only when the constrained set is empty.
+- `Exact` never falls back; an unavailable size produces `SessionConfigurationFailed` with platform code `ExactResolutionUnavailable`.
+
+Use `CameraCaptureOptions.Default` to rule out a device-specific high-resolution combination. Configuration changes must replace `CaptureOptions`; its immutable properties cannot be changed in place.
+
 ## UI updates throw or behave inconsistently
 
 `OnFrameResult` is raised from a native capture queue. Use `MainThread.BeginInvokeOnMainThread` before updating controls or other UI-bound state.

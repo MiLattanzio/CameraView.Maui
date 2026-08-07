@@ -15,11 +15,8 @@ A MAUI `View` that displays the native camera preview and emits JPEG frames.
 | `Enabled` | `bool` | `true` | Controls whether the camera session should be active. |
 | `State` | `CameraState` | `Stopped` | Read-only current lifecycle state of the native camera session. |
 | `IsRunning` | `bool` | `false` | Read-only convenience value equivalent to `State == CameraState.Running`. |
-| `Resolution` | `CameraResolution` | `Default` | Preferred encoded-frame resolution preset. Unsupported requests use the closest available native size. |
-| `JpegQuality` | `int` | `85` | JPEG quality from 1 to 100. The default preserves the previous behavior. |
-| `MaximumFrameRate` | `int` | `0` | Maximum delivered frame rate; zero means no explicit limit. |
-| `MinimumFrameInterval` | `TimeSpan` | `Zero` | Minimum time between delivered frames. `MaximumFrameRate` takes precedence when both are set. |
-| `EffectiveConfiguration` | `CameraCaptureConfiguration` | `null` | Read-only configuration selected by the native camera after startup. |
+| `CaptureOptions` | `CameraCaptureOptions` | `Default` | Immutable requested resolution, selection policy, JPEG quality, and delivery-rate limits. Replacing it restarts capture once. |
+| `EffectiveConfiguration` | `CameraCaptureConfiguration` | `null` | Read-only capture and preview configuration actually selected after startup. |
 
 ### Events
 
@@ -47,6 +44,8 @@ CameraPreview.ErrorOccurred += (_, args) =>
     ErrorLabel.Text = $"{args.Code}: {args.Message}";
 ```
 
+`EffectiveConfigurationChanged` is also dispatched through the MAUI dispatcher. Its `Configuration` is `null` while a new native session is being negotiated, then contains the selected output once startup succeeds.
+
 Exceptions thrown by a frame, state, or error subscriber are caught and written to the debug output so one consumer cannot terminate native capture or prevent other subscribers from running.
 
 ### Methods
@@ -69,18 +68,61 @@ Exceptions thrown by a frame, state, or error subscriber are caught and written 
 | `Orientation` | `CameraOrientation` | Orientation requested for the encoded frame. |
 | `Camera` | `CameraOptions` | Camera that produced the frame. |
 | `SequenceNumber` | `long` | Monotonically increasing number for successful results from this control instance. |
+| `Configuration` | `CameraCaptureConfiguration` | Configuration snapshot associated with the frame when available. |
+
+The public `CameraResult(byte[])` constructor from 1.0 remains unchanged. Native metadata is populated only for frames produced by `CameraView`.
+
+## CameraCaptureOptions
+
+`CameraCaptureOptions` is an immutable record. Assign a complete instance to `CameraView.CaptureOptions`; use a `with` expression for small changes without mutating an object already used by a running session.
+
+| Member | Default | Description |
+| --- | --- | --- |
+| `PreferredResolution` | `CameraResolution.Default` | Preferred encoded size. Supports presets and arbitrary positive dimensions. |
+| `ResolutionSelectionMode` | `Closest` | Controls fallback when the exact size is unavailable. |
+| `JpegQuality` | `null` | Quality from 1 to 100. `null` preserves the platform behavior used by 1.0. |
+| `MaximumFrameRate` | `0` | Maximum delivered frames per second as a `double`; zero disables this constraint. |
+| `MinimumFrameInterval` | `TimeSpan.Zero` | Minimum elapsed time between delivered frames. |
+
+When both rate constraints are supplied, the stricter (longer) interval is used. Throttling occurs before managed delivery, uses a monotonic clock, and never creates a queue.
+
+Reusable profiles are `Default`, `LowBandwidth`, `Balanced`, and `HighQuality`.
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Balanced with
+{
+    PreferredResolution = new CameraResolution(1440, 1080),
+    ResolutionSelectionMode = CameraResolutionSelectionMode.AtMost,
+    MaximumFrameRate = 12.5
+};
+```
 
 ## CameraCaptureConfiguration
 
-Reports the effective native output after negotiation. `Width` and `Height` are the selected encoded dimensions; `JpegQuality`, `MaximumFrameRate`, and `MinimumFrameInterval` report the active requested limits.
+Reports the effective native output after negotiation.
+
+| Member | Description |
+| --- | --- |
+| `RequestedOptions` | Immutable options that produced this session. |
+| `CaptureResolution` | Actual encoded-frame size. |
+| `PreviewResolution` | Actual native preview buffer size. |
+| `JpegQuality` | Effective configured quality; `null` means the Android platform default remains in use. |
+| `MinimumFrameInterval` | Active minimum interval enforced before managed delivery. |
+| `MaximumFrameRate` | Rate derived from the active interval, or zero when unlimited. |
+| `UsedResolutionFallback` | Whether the selected capture dimensions differ from the requested dimensions. |
 
 ## CameraResolution
 
-- `Default` (the 1.0 720p-or-lower behavior)
-- `Qvga`
-- `Vga`
-- `Hd720p`
-- `Hd1080p`
+`CameraResolution` is an immutable width/height value. `Default` keeps the 1.0 720p-or-lower selection. Presets are `Qvga`, `Vga`, `Hd720p`, `Hd1080p`, and `Uhd4K`; arbitrary sizes use `new CameraResolution(width, height)`.
+
+`HasSameDimensions` compares sizes independently of portrait/landscape ordering. `PixelCount` and `IsDefault` are available for diagnostics.
+
+## CameraResolutionSelectionMode
+
+- `Closest`: minimizes aspect-ratio and pixel-count differences.
+- `AtMost`: chooses the closest compatible size no greater than the request; falls back to `Closest` if none exists.
+- `AtLeast`: chooses the closest compatible size no smaller than the request; falls back to `Closest` if none exists.
+- `Exact`: does not fall back and reports `SessionConfigurationFailed` when unavailable.
 
 `new CameraResult()` creates an unsuccessful result. `new CameraResult(byte[])` creates a successful result and rejects a null array.
 
@@ -124,6 +166,13 @@ These values are platform-independent and stable. Platform-specific diagnostics 
 | `PreviousState` | `CameraState` | State before the transition. |
 | `State` | `CameraState` | New camera state. |
 | `Camera` | `CameraOptions` | Camera selected when the transition was emitted. |
+
+## CameraCaptureConfigurationChangedEventArgs
+
+| Member | Type | Description |
+| --- | --- | --- |
+| `PreviousConfiguration` | `CameraCaptureConfiguration` | Previously effective configuration, or `null`. |
+| `Configuration` | `CameraCaptureConfiguration` | Newly effective configuration, or `null` while restarting/stopped/failed. |
 
 ## CameraErrorEventArgs
 

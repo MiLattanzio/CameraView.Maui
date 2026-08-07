@@ -9,7 +9,7 @@
     <LangVersion>latest</LangVersion>
     <MauiVersion>9.0.120</MauiVersion>
     <MauiVersion Condition="'$(TargetFramework)' == 'net10.0-android' Or '$(TargetFramework)' == 'net10.0-ios'">10.0.90</MauiVersion>
-    <CameraViewPackageVersion Condition="'$(CameraViewPackageVersion)' == ''">1.0.1</CameraViewPackageVersion>
+    <CameraViewPackageVersion Condition="'$(CameraViewPackageVersion)' == ''">1.1.0</CameraViewPackageVersion>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 

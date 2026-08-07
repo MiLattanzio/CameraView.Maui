@@ -1,24 +1,36 @@
 namespace CameraView.Maui;
 
-public sealed class CameraCaptureConfiguration : EventArgs
+public sealed class CameraCaptureConfiguration
 {
-    public CameraCaptureConfiguration(
-        int width,
-        int height,
-        int jpegQuality,
-        int maximumFrameRate,
+    internal CameraCaptureConfiguration(
+        CameraCaptureOptions requestedOptions,
+        CameraResolution captureResolution,
+        CameraResolution previewResolution,
+        int? jpegQuality,
         TimeSpan minimumFrameInterval)
     {
-        Width = width;
-        Height = height;
+        RequestedOptions = requestedOptions;
+        CaptureResolution = captureResolution;
+        PreviewResolution = previewResolution;
         JpegQuality = jpegQuality;
-        MaximumFrameRate = maximumFrameRate;
         MinimumFrameInterval = minimumFrameInterval;
     }
 
-    public int Width { get; }
-    public int Height { get; }
-    public int JpegQuality { get; }
-    public int MaximumFrameRate { get; }
+    public CameraCaptureOptions RequestedOptions { get; }
+
+    public CameraResolution CaptureResolution { get; }
+
+    public CameraResolution PreviewResolution { get; }
+
+    public int? JpegQuality { get; }
+
     public TimeSpan MinimumFrameInterval { get; }
+
+    public double MaximumFrameRate => MinimumFrameInterval > TimeSpan.Zero
+        ? 1d / MinimumFrameInterval.TotalSeconds
+        : 0;
+
+    public bool UsedResolutionFallback =>
+        !RequestedOptions.PreferredResolution.IsDefault &&
+        !RequestedOptions.PreferredResolution.HasSameDimensions(CaptureResolution);
 }

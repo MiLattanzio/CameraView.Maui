@@ -19,7 +19,8 @@ Public member names shown below are provisional until their implementation is re
 | --- | --- | --- |
 | 1.0.1 | Reliability and packaging hardening | Released 2026-08-06 |
 | 1.1.0 | .NET 10 and camera diagnostics | Released 2026-08-06 |
-| 1.2.0 | Capture configuration and frame metadata | Released 2026-08-06 |
+| 1.2.0 | Capture configuration and frame metadata | GitHub release 2026-08-06; not published to NuGet.org |
+| 1.2.1 | Configuration and preview hardening | Released 2026-08-07 |
 | 1.3.0 | Interactive camera controls | Planned |
 | 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |
@@ -65,7 +66,7 @@ Exit criteria:
 
 This release lets applications balance image quality, throughput, memory use, and processing latency.
 
-Planned scope:
+Implementation scope:
 
 - Add preferred capture resolution or resolution presets, with documented hardware negotiation.
 - Add configurable JPEG quality.
@@ -79,6 +80,27 @@ Exit criteria:
 - Configuration changes restart the session safely and survive application resume.
 - Unsupported requests fall back predictably and report the effective settings.
 - Frame throttling does not create an unbounded queue and is verified under sustained processing load.
+
+## 1.2.1 — Configuration and preview hardening
+
+This maintenance release finalizes the 1.2 capture API and publishes it to NuGet.org after the 1.2.0 package was blocked by compatibility validation.
+
+Delivered scope:
+
+- Replace independently mutable settings with one immutable, atomic `CameraCaptureOptions` value.
+- Support arbitrary resolutions and explicit `Closest`, `AtMost`, `AtLeast`, and `Exact` negotiation policies.
+- Report requested and effective capture settings, including predictable native fallbacks.
+- Restore the original `CameraResult(byte[])` constructor required for binary compatibility with 1.1.0 consumers.
+- Preserve the Android preview aspect ratio across portrait, landscape, reverse portrait, and reverse landscape rotations.
+- Make the sample application deployable from Rider while retaining an explicit .NET 9 compatibility override.
+- Validate configuration selection and preview transformation calculations in CI before packing.
+
+Exit criteria:
+
+- Package validation reports no breaking changes against the latest public NuGet version, 1.1.0.
+- Android and iOS builds pass for .NET 9 and .NET 10.
+- The Android sample remains active and undistorted across all four display rotations.
+- Trusted Publishing completes and `CameraView.Maui` 1.2.1 is visible on NuGet.org.
 
 ## 1.3.0 — Interactive camera controls
 

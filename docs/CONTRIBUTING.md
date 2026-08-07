@@ -22,6 +22,14 @@ Build the solution:
 dotnet build CameraView.Maui.sln --configuration Release
 ```
 
+Run deterministic capture-configuration tests:
+
+```shell
+dotnet run \
+  --project tests/CameraView.Maui.ConfigurationTests/CameraView.Maui.ConfigurationTests.csproj \
+  --configuration Release
+```
+
 Create a local package:
 
 ```shell
@@ -30,7 +38,7 @@ dotnet pack CameraView.Maui/CameraView.Maui.csproj \
   --output artifacts/nuget
 ```
 
-Packing runs the .NET SDK package validator against the previous stable NuGet baseline. CI also inspects the generated package and symbols, then builds `tests/CameraView.Maui.PackageSmokeTest` against the local package artifact for .NET 9 and .NET 10 on Android and iOS.
+Packing runs the .NET SDK package validator against the previous stable NuGet baseline. CI also exercises deterministic option validation and resolution negotiation, inspects the generated package and symbols, then builds `tests/CameraView.Maui.PackageSmokeTest` against the local package artifact for .NET 9 and .NET 10 on Android and iOS.
 
 ## Pull requests
 

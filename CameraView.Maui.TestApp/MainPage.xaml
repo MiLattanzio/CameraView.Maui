@@ -29,6 +29,12 @@
                        TextColor="White"
                        HorizontalTextAlignment="Center" />
 
+                <Label x:Name="ConfigurationLabel"
+                       Text="Configurazione: in attesa"
+                       FontSize="12"
+                       TextColor="#FFBDBDBD"
+                       HorizontalTextAlignment="Center" />
+
                 <Label x:Name="ErrorLabel"
                        IsVisible="False"
                        TextColor="#FFFF8A80"
@@ -46,6 +52,25 @@
                             Grid.Column="2"
                             Text="Landscape"
                             Clicked="OnToggleOrientationClicked" />
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="8">
+                    <Button Grid.Column="0"
+                            Text="Default"
+                            CommandParameter="Default"
+                            Clicked="OnCaptureProfileClicked" />
+                    <Button Grid.Column="1"
+                            Text="Low"
+                            CommandParameter="Low"
+                            Clicked="OnCaptureProfileClicked" />
+                    <Button Grid.Column="2"
+                            Text="Balanced"
+                            CommandParameter="Balanced"
+                            Clicked="OnCaptureProfileClicked" />
+                    <Button Grid.Column="3"
+                            Text="Custom"
+                            CommandParameter="Custom"
+                            Clicked="OnCaptureProfileClicked" />
                 </Grid>
             </VerticalStackLayout>
         </Border>

@@ -83,7 +83,40 @@ private void OnFrameResult(CameraResult result)
 
 Frame callbacks run on a native capture queue. Marshal UI work to the MAUI main thread and keep the callback short so the camera pipeline is not delayed.
 
-## 6. Observe camera state and errors
+## 6. Configure capture
+
+Replace `CaptureOptions` to apply a complete configuration with one session restart:
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Balanced with
+{
+    PreferredResolution = new CameraResolution(1600, 1200),
+    ResolutionSelectionMode = CameraResolutionSelectionMode.AtMost,
+    JpegQuality = 82,
+    MaximumFrameRate = 12.5,
+    MinimumFrameInterval = TimeSpan.FromMilliseconds(50)
+};
+```
+
+The longer of the frame-rate interval and `MinimumFrameInterval` is enforced. Use `CameraCaptureOptions.Default` to retain the 1.0 behavior, including the Android platform JPEG default and 720p-or-lower size negotiation.
+
+Inspect the selected hardware configuration on the UI thread:
+
+```csharp
+CameraPreview.EffectiveConfigurationChanged += (_, args) =>
+{
+    if (args.Configuration is { } selected)
+    {
+        ConfigurationLabel.Text =
+            $"Capture {selected.CaptureResolution}, " +
+            $"preview {selected.PreviewResolution}";
+    }
+};
+```
+
+`Closest`, `AtMost`, and `AtLeast` provide deterministic fallback. Choose `Exact` when a different size must be treated as a configuration failure.
+
+## 7. Observe camera state and errors
 
 `StateChanged` and `ErrorOccurred` run through the MAUI dispatcher, so their handlers can update page controls directly:
 

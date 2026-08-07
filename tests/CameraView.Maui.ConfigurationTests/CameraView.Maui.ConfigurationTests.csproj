@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\CameraView.Maui\CameraCaptureOptions.cs" Link="CameraCaptureOptions.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraPreviewTransform.cs" Link="CameraPreviewTransform.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraResolution.cs" Link="CameraResolution.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraResolutionSelectionMode.cs" Link="CameraResolutionSelectionMode.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraResolutionSelector.cs" Link="CameraResolutionSelector.cs" />
+  </ItemGroup>
+</Project>

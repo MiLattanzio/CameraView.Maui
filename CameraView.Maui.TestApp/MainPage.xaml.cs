@@ -11,6 +11,7 @@ public partial class MainPage : ContentPage
         CameraPreview.OnFrameResult += OnFrameResult;
         CameraPreview.StateChanged += OnCameraStateChanged;
         CameraPreview.ErrorOccurred += OnCameraError;
+        CameraPreview.EffectiveConfigurationChanged += OnEffectiveConfigurationChanged;
     }
 
     protected override void OnAppearing()
@@ -39,7 +40,9 @@ public partial class MainPage : ContentPage
             return;
 
         MainThread.BeginInvokeOnMainThread(() =>
-            StatusLabel.Text = $"Frame {frameCount:N0} · {result.Image.Length:N0} byte");
+            StatusLabel.Text =
+                $"Frame {result.SequenceNumber:N0} · {result.Width}x{result.Height} · " +
+                $"{result.Image.Length:N0} byte");
     }
 
     private void OnCameraStateChanged(
@@ -63,6 +66,25 @@ public partial class MainPage : ContentPage
         ErrorLabel.IsVisible = true;
     }
 
+    private void OnEffectiveConfigurationChanged(
+        object sender,
+        CameraCaptureConfigurationChangedEventArgs eventArgs)
+    {
+        var configuration = eventArgs.Configuration;
+        if (configuration is null)
+        {
+            ConfigurationLabel.Text = "Configurazione: in attesa";
+            return;
+        }
+
+        var quality = configuration.JpegQuality?.ToString() ?? "platform";
+        var fallback = configuration.UsedResolutionFallback ? " · fallback" : string.Empty;
+        ConfigurationLabel.Text =
+            $"Capture {configuration.CaptureResolution} · Preview " +
+            $"{configuration.PreviewResolution} · JPEG {quality} · " +
+            $"{configuration.MaximumFrameRate:0.##} fps{fallback}";
+    }
+
     private void OnSwitchCameraClicked(object sender, EventArgs e) =>
         CameraPreview.Camera = CameraPreview.Camera == CameraOptions.Rear
             ? CameraOptions.Front
@@ -81,5 +103,25 @@ public partial class MainPage : ContentPage
         OrientationButton.Text = CameraPreview.Orientation == CameraOrientation.Portrait
             ? "Landscape"
             : "Portrait";
+    }
+
+    private void OnCaptureProfileClicked(object sender, EventArgs eventArgs)
+    {
+        if (sender is not Button { CommandParameter: string profile })
+            return;
+
+        CameraPreview.CaptureOptions = profile switch
+        {
+            "Low" => CameraCaptureOptions.LowBandwidth,
+            "Balanced" => CameraCaptureOptions.Balanced,
+            "Custom" => CameraCaptureOptions.HighQuality with
+            {
+                PreferredResolution = new CameraResolution(1600, 1200),
+                ResolutionSelectionMode = CameraResolutionSelectionMode.AtMost,
+                MaximumFrameRate = 8,
+                MinimumFrameInterval = TimeSpan.FromMilliseconds(150)
+            },
+            _ => CameraCaptureOptions.Default
+        };
     }
 }

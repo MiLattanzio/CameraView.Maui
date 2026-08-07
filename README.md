@@ -76,15 +76,37 @@ private void OnFrameResult(CameraResult result)
 }
 ```
 
-Configure capture before enabling the view. Changes restart the native session safely and are reapplied after resume:
+Configure capture atomically. Assigning one immutable options object produces a single native restart and the same options are reapplied after resume:
 
 ```csharp
-CameraPreview.Resolution = CameraResolution.Hd720p;
-CameraPreview.JpegQuality = 80;
-CameraPreview.MaximumFrameRate = 15;
+CameraPreview.CaptureOptions = CameraCaptureOptions.Balanced with
+{
+    // Presets are available, or request any positive width and height.
+    PreferredResolution = new CameraResolution(1600, 1200),
+    ResolutionSelectionMode = CameraResolutionSelectionMode.AtMost,
+    JpegQuality = 82,
+    MaximumFrameRate = 12.5,
+    MinimumFrameInterval = TimeSpan.FromMilliseconds(50)
+};
 ```
 
-`Resolution` is a preference: unsupported presets are negotiated to the closest native size. `MaximumFrameRate` takes precedence over `MinimumFrameInterval`. The default values preserve the 1.0 behavior.
+`Closest`, `AtMost`, and `AtLeast` fall back predictably when the requested size is unavailable; `Exact` reports a structured configuration error instead. When both frame limits are set, the stricter interval wins. `CameraCaptureOptions.Default` preserves the 1.0 platform quality and 720p-or-lower behavior.
+
+Observe what the device actually selected:
+
+```csharp
+CameraPreview.EffectiveConfigurationChanged += (_, args) =>
+{
+    var selected = args.Configuration;
+    if (selected is null)
+        return;
+
+    Debug.WriteLine(
+        $"Capture {selected.CaptureResolution}; " +
+        $"preview {selected.PreviewResolution}; " +
+        $"fallback {selected.UsedResolutionFallback}");
+};
+```
 
 Subscribe and unsubscribe with the page lifecycle:
 
@@ -315,11 +337,14 @@ Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDe
 | `Camera` | `CameraOptions.Rear` | Selects the rear or front camera. |
 | `Orientation` | `CameraOrientation.Landscape` | Controls portrait or landscape output. |
 | `Enabled` | `true` | Controls native camera ownership and capture. |
+| `CaptureOptions` | `CameraCaptureOptions.Default` | Atomically configures resolution selection, JPEG quality, and delivery rate. |
+| `EffectiveConfiguration` | `null` | Reports the native capture and preview sizes plus active delivery settings. |
 | `State` | `CameraState.Stopped` | Reports the current native camera lifecycle state. |
 | `IsRunning` | `false` | Indicates that native capture is actually running. |
 | `OnFrameResult` | — | Emits successful JPEG frames through `CameraResult.Image`. |
 | `StateChanged` | — | Reports state transitions on the MAUI dispatcher. |
 | `ErrorOccurred` | — | Reports structured camera failures on the MAUI dispatcher. |
+| `EffectiveConfigurationChanged` | — | Reports configuration negotiation and clearing on the MAUI dispatcher. |
 
 ## Frame-processing recommendations
 
