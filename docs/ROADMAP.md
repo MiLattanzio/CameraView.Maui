@@ -10,8 +10,8 @@ Public member names shown below are provisional until their implementation is re
 - Android and iOS reach feature parity before a feature is considered complete.
 - Existing defaults continue to produce the current 720p-or-lower JPEG stream unless an application opts into new settings.
 - .NET 10 support is added before .NET 9 is retired. Dropping a target framework is reserved for a major release.
-- Raw frames, explicit buffer ownership, and removal of compatibility APIs are reserved for 2.0.
-- Patch releases contain fixes, documentation, and packaging changes only; new public features ship in minor releases.
+- Additive opt-in raw frames and explicit buffer leases may extend the existing 1.2 capture-configuration theme without changing the JPEG default. Removing compatibility APIs remains reserved for 2.0.
+- Patch releases remain backward compatible and may complete an already shipped minor capability with additive opt-in APIs; independently scoped public features ship in minor releases.
 
 ## Planned releases
 
@@ -21,6 +21,7 @@ Public member names shown below are provisional until their implementation is re
 | 1.1.0 | .NET 10 and camera diagnostics | Released 2026-08-06 |
 | 1.2.0 | Capture configuration and frame metadata | GitHub release 2026-08-06; not published to NuGet.org |
 | 1.2.1 | Configuration and preview hardening | Released 2026-08-07 |
+| 1.2.2 | High-throughput configurable frame pipeline | Implemented |
 | 1.3.0 | Interactive camera controls | Planned |
 | 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |
@@ -102,6 +103,29 @@ Exit criteria:
 - The Android sample remains active and undistorted across all four display rotations.
 - Trusted Publishing completes and `CameraView.Maui` 1.2.1 is visible on NuGet.org.
 
+## 1.2.2 — High-throughput configurable frame pipeline
+
+This patch completes the 1.2 capture-configuration work without changing the existing JPEG behavior or removing any public API.
+
+Implementation scope:
+
+- Keep `CameraCaptureOptions.Default` and `OnFrameResult` byte-for-byte compatible with the JPEG pipeline shipped in 1.2.1.
+- Add an opt-in `FrameAvailable` API for encoded JPEG, native YUV, and supported BGRA buffers.
+- Expose zero-copy frame planes with dimensions, row stride, pixel stride, rotation, and mirroring metadata.
+- Use explicit borrowed-frame lifetime and retainable disposable leases for asynchronous processing.
+- Add latest-frame and sequential delivery policies with a bounded native buffer capacity.
+- Negotiate the platform default, maximum, or closest requested native frame-rate range independently from managed delivery throttling.
+- Report concrete formats, supported resolutions, frame-rate ranges, and the effective native configuration.
+- Add a `Realtime` profile for low-latency 720p native YUV delivery at the fastest supported native rate.
+
+Exit criteria:
+
+- Existing 1.2.1 consumers pass package API and binary compatibility validation unchanged.
+- Raw delivery performs no JPEG encode/decode and no plane copy before the subscriber reads `CameraFramePlane.Span`.
+- Retained Android `Image` and iOS `CVPixelBuffer` resources are released deterministically after the final frame lease.
+- Android and iOS build for .NET 9 and .NET 10, and the packed package compiles in a clean consumer.
+- Documentation covers plane layouts, stride, rotation, ownership, backpressure, and asynchronous processing.
+
 ## 1.3.0 — Interactive camera controls
 
 This release adds controls required by scanner, document-capture, and assisted-photography experiences.
@@ -139,22 +163,22 @@ Exit criteria:
 - The live preview recovers after success, cancellation, and native capture failure.
 - The API does not require storage or image-processing dependencies.
 
-## 2.0.0 — Async and zero-copy frame pipeline
+## 2.0.0 — Async frame pipeline and API cleanup
 
 Version 2.0 is reserved for changes that cannot be introduced while preserving the 1.x contract.
 
 Exploration scope:
 
 - Replace the mutable `CameraResult` contract with immutable frame, photo, state, and error types.
-- Support encoded JPEG and platform-neutral raw pixel formats.
-- Introduce explicit disposable or pooled buffer ownership to reduce per-frame allocations.
+- Build an asynchronous processing API over the 1.2.2 JPEG/raw formats and explicit buffer leases.
+- Evaluate pooled managed copies for processors that cannot consume native plane memory synchronously.
 - Provide a built-in latest-frame asynchronous processor with bounded backpressure and cancellation.
 - Add explicit asynchronous start and stop operations.
 - Remove the legacy bindable-property aliases and make handler-only result methods non-public.
 - Rename .NET events according to standard conventions while providing a migration guide.
 - Target supported LTS tooling only; additional platforms require their own support proposal and test matrix.
 
-2.0 implementation should begin only after 1.x telemetry, issues, and consumer feedback establish which raw formats and ownership model are actually needed.
+2.0 implementation should begin only after 1.2.2 telemetry and consumer feedback establish which asynchronous, pooling, and migration APIs are actually needed.
 
 ## Release gate for every version
 

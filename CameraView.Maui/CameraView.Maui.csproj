@@ -9,15 +9,16 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <MauiVersion>9.0.120</MauiVersion>
     <MauiVersion Condition="'$(TargetFramework)' == 'net10.0-android' Or '$(TargetFramework)' == 'net10.0-ios'">10.0.90</MauiVersion>
 
     <IsPackable>true</IsPackable>
     <PackageId>CameraView.Maui</PackageId>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <Authors>Mi Lattanzio</Authors>
-    <Description>A cross-platform .NET MAUI camera preview that streams encoded frames on Android and iOS.</Description>
-    <PackageTags>maui;camera;android;ios;camera2;avfoundation</PackageTags>
+    <Description>A cross-platform .NET MAUI camera preview with JPEG and high-throughput raw frame streaming on Android and iOS.</Description>
+    <PackageTags>maui;camera;android;ios;camera2;avfoundation;frames;yuv</PackageTags>
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -37,7 +38,7 @@
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <EnablePackageValidation>true</EnablePackageValidation>
-    <PackageValidationBaselineVersion>1.1.0</PackageValidationBaselineVersion>
+    <PackageValidationBaselineVersion>1.2.1</PackageValidationBaselineVersion>
   </PropertyGroup>
 
   <ItemGroup>

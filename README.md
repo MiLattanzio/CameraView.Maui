@@ -4,18 +4,18 @@
 [![NuGet](https://img.shields.io/nuget/v/CameraView.Maui.svg)](https://www.nuget.org/packages/CameraView.Maui)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-CameraView.Maui is a reusable .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation and exposes each captured frame as an encoded JPEG byte array.
+CameraView.Maui is a reusable .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation and exposes both backward-compatible JPEG frames and high-throughput raw camera buffers.
 
 ## Features
 
 - Native live preview on Android and iOS.
 - Front and rear camera selection.
 - Portrait and landscape output orientation.
-- JPEG frame callbacks.
+- JPEG callbacks plus zero-copy YUV/BGRA frame access.
 - Runtime permission requests.
 - Automatic camera release and restart across app deactivation, screen lock, and resume.
 - Observable camera state and structured cross-platform errors.
-- Configurable resolution, JPEG quality, frame throttling, and effective capture metadata.
+- Configurable resolution, pixel format, native frame rate, delivery policy, JPEG quality, throttling, and effective camera capabilities.
 - .NET 9 and .NET 10 MAUI targets in the same package.
 
 ## Requirements
@@ -76,6 +76,44 @@ private void OnFrameResult(CameraResult result)
 }
 ```
 
+## Process raw frames at camera speed
+
+Use the opt-in `Realtime` profile for barcode scanning, OCR, computer vision, or ML. It avoids JPEG encoding and decoding, requests the fastest native frame-rate range, and keeps only the newest frame when processing falls behind:
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Realtime;
+CameraPreview.FrameAvailable += OnFrameAvailable;
+
+private void OnFrameAvailable(object? sender, CameraFrameEventArgs args)
+{
+    CameraFrame frame = args.Frame;
+    CameraFramePlane luminance = frame.Planes[0];
+
+    // Consume synchronously without allocating or copying.
+    ReadOnlySpan<byte> y = luminance.Span;
+    AnalyzeLuminance(
+        y,
+        luminance.Width,
+        luminance.Height,
+        luminance.RowStride,
+        frame.RotationDegrees);
+}
+```
+
+`CameraFrameFormat.Native` resolves to `Yuv420` on Android and iOS. Android exposes the native three-plane `YUV_420_888` layout; iOS exposes bi-planar NV12. Always use each plane's `RowStride` and `PixelStride` instead of assuming tightly packed pixels. `Bgra8888` is also available when iOS reports support.
+
+The event frame is borrowed and valid only during that subscriber call. Retain it before asynchronous work and dispose the retained frame promptly:
+
+```csharp
+private async void OnFrameAvailable(object? sender, CameraFrameEventArgs args)
+{
+    using CameraFrame frame = args.Frame.Retain();
+    await Task.Run(() => AnalyzeFrame(frame));
+}
+```
+
+Retaining a raw frame intentionally keeps its native camera buffer alive. `MaxOutstandingFrames` bounds that pressure; when using `Latest`, the camera drops frames rather than building a managed queue.
+
 Configure capture atomically. Assigning one immutable options object produces a single native restart and the same options are reapplied after resume:
 
 ```csharp
@@ -128,7 +166,8 @@ protected override void OnDisappearing()
 
 Important frame characteristics:
 
-- `Image` contains a complete JPEG byte array, not raw RGB/YUV pixels.
+- `OnFrameResult` remains the compatibility path and contains a complete JPEG byte array.
+- `FrameAvailable` emits JPEG, YUV, or BGRA according to `CaptureOptions.FrameFormat`.
 - The callback runs on a native capture queue and is not guaranteed to be the UI thread.
 - A new frame can arrive before processing of the previous frame has completed.
 - Exceptions from individual subscribers are isolated and written to debug output; still handle processing errors locally so failed work is visible to the application.
@@ -279,13 +318,13 @@ The camera control already renders the live native preview. Continuously assigni
 
 ## Decode or analyze pixels
 
-CameraView.Maui intentionally exposes encoded JPEG data and does not impose an image-processing dependency. If an algorithm needs pixel access:
+Prefer `CameraCaptureOptions.Realtime` when an algorithm accepts luminance or YUV planes. This removes both JPEG encoding in the camera pipeline and JPEG decoding in the application. Use JPEG only when the downstream API explicitly needs encoded image data.
 
-1. Keep the bounded/drop-oldest processing pattern.
-2. Decode the JPEG off the UI thread with a mobile-compatible image library or platform API.
-3. Reuse decoder and model instances where the selected API allows it.
-4. Dispose native images, bitmaps, tensors, and streams promptly.
-5. Marshal only the final UI state back through `MainThread`.
+1. Prefer synchronous access to the borrowed `CameraFrame` for the lowest latency.
+2. Call `Retain()` before asynchronous processing and always dispose the returned frame.
+3. Respect plane dimensions, row stride, pixel stride, `RotationDegrees`, and `IsMirrored`.
+4. Reuse model, tensor, and conversion resources.
+5. Marshal only final UI state back through `MainThread`.
 
 Avoid `System.Drawing.Common` in Android/iOS application code; choose a decoder explicitly designed for the target platforms.
 
@@ -328,7 +367,7 @@ CameraPreview.ErrorOccurred += (_, args) =>
 
 Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, and `Failed`. Stable error codes distinguish permission denial, unavailable or busy cameras, session configuration failures, device disconnection, and frame capture failures.
 
-`StateChanged` and `ErrorOccurred` run through the view dispatcher. `OnFrameResult` continues to run on the native capture queue for throughput.
+`StateChanged` and `ErrorOccurred` run through the view dispatcher. `OnFrameResult` and `FrameAvailable` continue to run on the native capture queue for throughput.
 
 ## API summary
 
@@ -337,11 +376,12 @@ Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDe
 | `Camera` | `CameraOptions.Rear` | Selects the rear or front camera. |
 | `Orientation` | `CameraOrientation.Landscape` | Controls portrait or landscape output. |
 | `Enabled` | `true` | Controls native camera ownership and capture. |
-| `CaptureOptions` | `CameraCaptureOptions.Default` | Atomically configures resolution selection, JPEG quality, and delivery rate. |
-| `EffectiveConfiguration` | `null` | Reports the native capture and preview sizes plus active delivery settings. |
+| `CaptureOptions` | `CameraCaptureOptions.Default` | Atomically configures resolution, frame format, native rate, delivery policy, JPEG quality, and throttling. |
+| `EffectiveConfiguration` | `null` | Reports selected sizes, format, native rate, delivery settings, and device capabilities. |
 | `State` | `CameraState.Stopped` | Reports the current native camera lifecycle state. |
 | `IsRunning` | `false` | Indicates that native capture is actually running. |
 | `OnFrameResult` | — | Emits successful JPEG frames through `CameraResult.Image`. |
+| `FrameAvailable` | — | Emits borrowed JPEG, YUV, or BGRA `CameraFrame` values without forcing an encoded copy. |
 | `StateChanged` | — | Reports state transitions on the MAUI dispatcher. |
 | `ErrorOccurred` | — | Reports structured camera failures on the MAUI dispatcher. |
 | `EffectiveConfigurationChanged` | — | Reports configuration negotiation and clearing on the MAUI dispatcher. |
@@ -350,6 +390,7 @@ Possible states are `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDe
 
 - Drop or throttle frames instead of queueing an unlimited number.
 - Keep native callback work short.
+- Dispose every retained raw frame; never retain more frames than processing can finish.
 - Do not update MAUI controls outside `MainThread`.
 - Avoid Base64 conversion unless an external protocol requires it; it increases payload size and allocations.
 - Avoid saving every frame to flash storage.

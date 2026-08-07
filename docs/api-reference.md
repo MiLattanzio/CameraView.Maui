@@ -4,7 +4,7 @@ All public types are in the `CameraView.Maui` namespace.
 
 ## CameraView
 
-A MAUI `View` that displays the native camera preview and emits JPEG frames.
+A MAUI `View` that displays the native camera preview and emits JPEG or raw native frames.
 
 ### Properties
 
@@ -15,7 +15,7 @@ A MAUI `View` that displays the native camera preview and emits JPEG frames.
 | `Enabled` | `bool` | `true` | Controls whether the camera session should be active. |
 | `State` | `CameraState` | `Stopped` | Read-only current lifecycle state of the native camera session. |
 | `IsRunning` | `bool` | `false` | Read-only convenience value equivalent to `State == CameraState.Running`. |
-| `CaptureOptions` | `CameraCaptureOptions` | `Default` | Immutable requested resolution, selection policy, JPEG quality, and delivery-rate limits. Replacing it restarts capture once. |
+| `CaptureOptions` | `CameraCaptureOptions` | `Default` | Immutable requested resolution, format, native frame rate, delivery policy, JPEG quality, and delivery-rate limits. Replacing it restarts capture once. |
 | `EffectiveConfiguration` | `CameraCaptureConfiguration` | `null` | Read-only capture and preview configuration actually selected after startup. |
 
 ### Events
@@ -32,7 +32,18 @@ CameraPreview.OnFrameResult += result =>
 };
 ```
 
-The event is raised on the platform capture queue, not necessarily the UI thread.
+`FrameAvailable` receives every configured output format. The event is raised on the platform capture queue, not necessarily the UI thread.
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Realtime;
+CameraPreview.FrameAvailable += (_, args) =>
+{
+    CameraFrame frame = args.Frame;
+    ReadOnlySpan<byte> luminance = frame.Planes[0].Span;
+};
+```
+
+The event's `CameraFrame` is borrowed and disposed immediately after that subscriber returns. Use `frame.Retain()` to create an independently disposable frame before returning or awaiting. One subscriber disposing its event frame does not affect other subscribers.
 
 `StateChanged` reports transitions together with the previous state and selected camera. `ErrorOccurred` reports a structured `CameraErrorEventArgs`. Both events are dispatched through the MAUI dispatcher and may update UI controls directly.
 
@@ -50,7 +61,7 @@ Exceptions thrown by a frame, state, or error subscriber are caught and written 
 
 ### Methods
 
-- `SetResult(byte[] image)` emits a successful result when the array is non-empty. It is primarily used by the native handler.
+- `SetResult(byte[] image)` emits a successful JPEG result and frame when the array is non-empty. It is primarily used by the native handler.
 - `Cancel()` emits an unsuccessful result.
 
 ### Compatibility fields
@@ -72,6 +83,32 @@ Exceptions thrown by a frame, state, or error subscriber are caught and written 
 
 The public `CameraResult(byte[])` constructor from 1.0 remains unchanged. Native metadata is populated only for frames produced by `CameraView`.
 
+## CameraFrame
+
+An immutable view over one encoded or native camera buffer. It implements `IDisposable` because raw frames can own Android `Image` or iOS `CVPixelBuffer` resources.
+
+| Member | Description |
+| --- | --- |
+| `Format` | Effective `Jpeg`, `Yuv420`, or `Bgra8888` format. A delivered frame is never reported as the `Native` request alias. |
+| `Width`, `Height` | Native output dimensions. |
+| `Timestamp` | UTC delivery timestamp. |
+| `Orientation`, `Camera` | Requested orientation and selected camera. |
+| `SequenceNumber` | Monotonically increasing number shared with the JPEG compatibility result. |
+| `Configuration` | Effective configuration associated with the frame. |
+| `RotationDegrees` | Clockwise rotation required before displaying or analyzing an unrotated raw buffer. |
+| `IsMirrored` | Whether the delivered pixels are already mirrored. |
+| `Planes` | Read-only list of `CameraFramePlane` values. |
+| `IsDisposed` | Whether this particular frame lease has been released. |
+| `Retain()` | Creates a new frame lease over the same buffer for asynchronous or deferred work. |
+
+The original event frame must not be cached. Dispose every retained frame promptly; retaining `MaxOutstandingFrames` native buffers can temporarily prevent the camera from delivering another raw frame.
+
+## CameraFramePlane
+
+`Span` exposes zero-copy read-only bytes while the owning frame is alive. `Length`, `Width`, `Height`, `RowStride`, and `PixelStride` describe the native layout. `CopyTo` and `ToArray` are explicit copying helpers.
+
+For `Yuv420`, plane zero is luminance. Android normally supplies separate Y, U, and V planes; iOS normally supplies Y plus an interleaved UV plane. Consumers must inspect the plane count and strides rather than assuming one layout. A JPEG frame has one encoded plane with zero pixel/row stride.
+
 ## CameraCaptureOptions
 
 `CameraCaptureOptions` is an immutable record. Assign a complete instance to `CameraView.CaptureOptions`; use a `with` expression for small changes without mutating an object already used by a running session.
@@ -81,12 +118,17 @@ The public `CameraResult(byte[])` constructor from 1.0 remains unchanged. Native
 | `PreferredResolution` | `CameraResolution.Default` | Preferred encoded size. Supports presets and arbitrary positive dimensions. |
 | `ResolutionSelectionMode` | `Closest` | Controls fallback when the exact size is unavailable. |
 | `JpegQuality` | `null` | Quality from 1 to 100. `null` preserves the platform behavior used by 1.0. |
+| `FrameFormat` | `Jpeg` | `Jpeg`, `Native`, `Yuv420`, or `Bgra8888`. `Native` negotiates the fastest raw format. |
+| `FrameDeliveryMode` | `Latest` | Drops stale native frames or requests sequential delivery. |
+| `MaxOutstandingFrames` | `2` | Native buffer capacity from 2 through 8. Higher values permit more retained frames but consume more memory. |
+| `FrameRateMode` | `PlatformDefault` | Keeps the native default, selects the maximum supported range, or chooses the range closest to `TargetFrameRate`. |
+| `TargetFrameRate` | `0` | Positive FPS required when `FrameRateMode` is `Closest`. |
 | `MaximumFrameRate` | `0` | Maximum delivered frames per second as a `double`; zero disables this constraint. |
 | `MinimumFrameInterval` | `TimeSpan.Zero` | Minimum elapsed time between delivered frames. |
 
 When both rate constraints are supplied, the stricter (longer) interval is used. Throttling occurs before managed delivery, uses a monotonic clock, and never creates a queue.
 
-Reusable profiles are `Default`, `LowBandwidth`, `Balanced`, and `HighQuality`.
+Reusable profiles are `Default`, `LowBandwidth`, `Balanced`, `HighQuality`, and `Realtime`. `Realtime` requests native YUV, the maximum supported native frame-rate range, latest-frame delivery, 720p, and three outstanding buffers.
 
 ```csharp
 CameraPreview.CaptureOptions = CameraCaptureOptions.Balanced with
@@ -109,7 +151,36 @@ Reports the effective native output after negotiation.
 | `JpegQuality` | Effective configured quality; `null` means the Android platform default remains in use. |
 | `MinimumFrameInterval` | Active minimum interval enforced before managed delivery. |
 | `MaximumFrameRate` | Rate derived from the active interval, or zero when unlimited. |
+| `FrameFormat` | Concrete delivered format after resolving `Native`. |
+| `FrameDeliveryMode` | Effective latest or sequential native delivery policy. |
+| `NativeFrameRate` | Requested native range accepted by the platform, or `null` for the platform default. |
+| `Capabilities` | Supported concrete formats, capture resolutions, and native frame-rate ranges. |
 | `UsedResolutionFallback` | Whether the selected capture dimensions differ from the requested dimensions. |
+| `UsedFrameFormatFallback` | Whether a concrete requested format differs from the delivered format. `Native` resolution is not considered fallback. |
+
+`MaximumFrameRate` throttles managed delivery. `NativeFrameRate` configures camera production. They are independent: native-rate selection can reduce sensor/ISP work, while delivery throttling can intentionally skip additional frames before managed callbacks.
+
+## CameraCaptureCapabilities
+
+`FrameFormats`, `CaptureResolutions`, and `FrameRateRanges` are immutable device selections reported for the active camera. `MaximumFrameRate`, `SupportsFrameFormat`, and `SupportsCaptureResolution` provide common queries. `Native` is supported when at least one raw format is available.
+
+## CameraFrameFormat
+
+- `Jpeg`: encoded bytes and the backward-compatible `OnFrameResult` event.
+- `Native`: request alias for the fastest platform raw format; delivered frames report the concrete format.
+- `Yuv420`: three-plane `YUV_420_888` on Android or bi-planar NV12 on iOS.
+- `Bgra8888`: one packed BGRA plane; currently available only when iOS reports support.
+
+## CameraFrameDeliveryMode
+
+- `Latest`: discard stale native frames and prioritize low latency.
+- `Sequential`: request frames in producer order. Slow or retained frames can apply native backpressure.
+
+## CameraFrameRateMode
+
+- `PlatformDefault`: do not override the device's native frame-rate choice.
+- `Maximum`: select the supported range with the highest upper bound.
+- `Closest`: select the supported range nearest to `TargetFrameRate`.
 
 ## CameraResolution
 

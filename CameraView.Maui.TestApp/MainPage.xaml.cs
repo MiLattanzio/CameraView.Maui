@@ -8,7 +8,7 @@ public partial class MainPage : ContentPage
     public MainPage()
     {
         InitializeComponent();
-        CameraPreview.OnFrameResult += OnFrameResult;
+        CameraPreview.FrameAvailable += OnFrameAvailable;
         CameraPreview.StateChanged += OnCameraStateChanged;
         CameraPreview.ErrorOccurred += OnCameraError;
         CameraPreview.EffectiveConfigurationChanged += OnEffectiveConfigurationChanged;
@@ -27,11 +27,9 @@ public partial class MainPage : ContentPage
         base.OnDisappearing();
     }
 
-    private void OnFrameResult(CameraResult result)
+    private void OnFrameAvailable(object sender, CameraFrameEventArgs eventArgs)
     {
-        if (!result.Success || result.Image is null)
-            return;
-
+        var frame = eventArgs.Frame;
         var frameCount = Interlocked.Increment(ref _frameCount);
         var now = Environment.TickCount64;
         var previousUpdate = Interlocked.Read(ref _lastStatusUpdate);
@@ -39,17 +37,18 @@ public partial class MainPage : ContentPage
             Interlocked.CompareExchange(ref _lastStatusUpdate, now, previousUpdate) != previousUpdate)
             return;
 
+        var bytes = frame.Planes.Sum(plane => plane.Length);
         MainThread.BeginInvokeOnMainThread(() =>
             StatusLabel.Text =
-                $"Frame {result.SequenceNumber:N0} · {result.Width}x{result.Height} · " +
-                $"{result.Image.Length:N0} byte");
+                $"Frame {frame.SequenceNumber:N0} - {frame.Width}x{frame.Height} - " +
+                $"{frame.Format} - {frame.Planes.Count} planes - {bytes:N0} bytes");
     }
 
     private void OnCameraStateChanged(
         object sender,
         CameraStateChangedEventArgs eventArgs)
     {
-        StateLabel.Text = $"Stato: {eventArgs.State} · Camera: {eventArgs.Camera}";
+        StateLabel.Text = $"Stato: {eventArgs.State} - Camera: {eventArgs.Camera}";
         ToggleButton.Text = eventArgs.State == CameraState.Stopped ? "Attiva" : "Disattiva";
 
         if (eventArgs.State is CameraState.Starting or CameraState.Running)
@@ -77,12 +76,13 @@ public partial class MainPage : ContentPage
             return;
         }
 
-        var quality = configuration.JpegQuality?.ToString() ?? "platform";
-        var fallback = configuration.UsedResolutionFallback ? " · fallback" : string.Empty;
+        var quality = configuration.JpegQuality?.ToString() ?? "n/a";
+        var fallback = configuration.UsedResolutionFallback ? " - fallback" : string.Empty;
         ConfigurationLabel.Text =
-            $"Capture {configuration.CaptureResolution} · Preview " +
-            $"{configuration.PreviewResolution} · JPEG {quality} · " +
-            $"{configuration.MaximumFrameRate:0.##} fps{fallback}";
+            $"Capture {configuration.CaptureResolution} - Preview " +
+            $"{configuration.PreviewResolution} - {configuration.FrameFormat} - " +
+            $"native {configuration.NativeFrameRate?.ToString() ?? "platform"} - " +
+            $"delivery {configuration.MaximumFrameRate:0.##} fps - JPEG {quality}{fallback}";
     }
 
     private void OnSwitchCameraClicked(object sender, EventArgs e) =>
@@ -114,6 +114,7 @@ public partial class MainPage : ContentPage
         {
             "Low" => CameraCaptureOptions.LowBandwidth,
             "Balanced" => CameraCaptureOptions.Balanced,
+            "Realtime" => CameraCaptureOptions.Realtime,
             "Custom" => CameraCaptureOptions.HighQuality with
             {
                 PreferredResolution = new CameraResolution(1600, 1200),

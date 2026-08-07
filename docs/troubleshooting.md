@@ -58,9 +58,13 @@ Add `NSCameraUsageDescription` to the app's `Info.plist`. iOS requires a purpose
 
 ## No frames arrive
 
-The preview and frame output share the same session. Confirm the preview is active, keep a strong subscription to `OnFrameResult`, and avoid blocking the capture callback.
+The preview and frame output share the same session. Confirm the preview is active, keep a strong subscription to `OnFrameResult` or `FrameAvailable`, and avoid blocking the capture callback.
 
 Frame delivery is intentionally throttled by the native camera and processing capacity; it is not guaranteed to match the sensor's maximum frame rate.
+
+For raw delivery, dispose every frame created by `Retain()`. Holding `MaxOutstandingFrames` native buffers at once can temporarily stop new frames until one is released. Prefer `FrameDeliveryMode.Latest` and a single retained in-flight frame for low-latency analysis.
+
+Inspect `EffectiveConfiguration.FrameFormat` and `Capabilities`. `Bgra8888` is not available on Android; use `Native` or `Yuv420` for portable high-throughput processing.
 
 ## Requested capture resolution is not selected
 
@@ -74,7 +78,9 @@ Use `CameraCaptureOptions.Default` to rule out a device-specific high-resolution
 
 ## UI updates throw or behave inconsistently
 
-`OnFrameResult` is raised from a native capture queue. Use `MainThread.BeginInvokeOnMainThread` before updating controls or other UI-bound state.
+`OnFrameResult` and `FrameAvailable` are raised from a native capture queue. Use `MainThread.BeginInvokeOnMainThread` before updating controls or other UI-bound state.
+
+An event `CameraFrame` is borrowed. Accessing `CameraFramePlane.Span` after the handler returns throws `ObjectDisposedException`. Call `Retain()` inside the handler before awaiting or queueing work, and dispose that retained frame when processing finishes.
 
 ## Android emulator issues
 

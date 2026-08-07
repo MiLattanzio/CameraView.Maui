@@ -6,6 +6,25 @@ The project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `FrameAvailable` delivery for JPEG, native YUV, and supported BGRA camera buffers.
+- Zero-copy `CameraFramePlane.Span` access with native plane dimensions, row stride, and pixel stride.
+- Borrowed event frames plus explicit retainable, disposable `CameraFrame` leases for asynchronous processing.
+- `Latest` and `Sequential` native delivery modes with configurable outstanding-buffer capacity.
+- Native frame-rate negotiation using platform default, maximum, or closest-target modes, independently from managed delivery throttling.
+- Frame rotation and mirroring metadata for processing raw sensor output correctly.
+- Effective camera capabilities covering concrete formats, output resolutions, and supported native frame-rate ranges.
+- A `CameraCaptureOptions.Realtime` profile for maximum-rate 720p native YUV analysis.
+
+### Changed
+
+- Package version advanced to 1.2.2 and API compatibility now validates against public version 1.2.1.
+- Android can stream direct `YUV_420_888` planes without JPEG encoding or a managed pixel copy.
+- iOS can stream locked NV12 or BGRA `CVPixelBuffer` planes without Core Image/UIKit conversion.
+- The sample application can switch between the compatibility JPEG profiles and the realtime raw profile.
+- `CameraCaptureOptions.Default` and `OnFrameResult` retain the 1.2.1 JPEG behavior.
+
 ## [1.2.1] - 2026-08-07
 
 ### Added

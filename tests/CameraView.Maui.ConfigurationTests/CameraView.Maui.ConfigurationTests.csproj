@@ -10,6 +10,18 @@
 
   <ItemGroup>
     <Compile Include="..\..\CameraView.Maui\CameraCaptureOptions.cs" Link="CameraCaptureOptions.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraCaptureCapabilities.cs" Link="CameraCaptureCapabilities.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraCaptureConfiguration.cs" Link="CameraCaptureConfiguration.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrame.cs" Link="CameraFrame.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrameBuffer.cs" Link="CameraFrameBuffer.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrameDeliveryMode.cs" Link="CameraFrameDeliveryMode.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFramePlane.cs" Link="CameraFramePlane.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrameFormat.cs" Link="CameraFrameFormat.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrameRateMode.cs" Link="CameraFrameRateMode.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrameRateRange.cs" Link="CameraFrameRateRange.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraFrameRateSelector.cs" Link="CameraFrameRateSelector.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraOptions.cs" Link="CameraOptions.cs" />
+    <Compile Include="..\..\CameraView.Maui\CameraOrientation.cs" Link="CameraOrientation.cs" />
     <Compile Include="..\..\CameraView.Maui\CameraPreviewTransform.cs" Link="CameraPreviewTransform.cs" />
     <Compile Include="..\..\CameraView.Maui\CameraResolution.cs" Link="CameraResolution.cs" />
     <Compile Include="..\..\CameraView.Maui\CameraResolutionSelectionMode.cs" Link="CameraResolutionSelectionMode.cs" />

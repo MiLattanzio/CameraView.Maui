@@ -5,6 +5,7 @@ using Android.Hardware.Camera2;
 using Android.Hardware.Camera2.Params;
 using Android.Media;
 using Android.OS;
+using Android.Runtime;
 using Android.Views;
 using Android.Widget;
 using Java.Lang;
@@ -34,7 +35,7 @@ public sealed class NativeCameraView : FrameLayout
     private List<OutputConfiguration> _outputConfigurations;
     private Size _previewSize;
     private CameraCharacteristics _cameraCharacteristics;
-    private Action<byte[], int, int, DateTimeOffset, CameraCaptureConfiguration> _frameCaptured;
+    private Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> _frameCaptured;
     private Action<CameraCaptureConfiguration> _configurationSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
@@ -48,6 +49,11 @@ public sealed class NativeCameraView : FrameLayout
     private int? _jpegQuality;
     private TimeSpan _minimumFrameInterval;
     private long _lastFrameTicks;
+    private CameraFrameFormat _frameFormat;
+    private Android.Util.Range _nativeFrameRateRange;
+    private CameraFrameRateRange? _effectiveNativeFrameRate;
+    private CameraCaptureCapabilities _capabilities;
+    private CameraFrameRateRange[] _availableFrameRateRanges = [];
 
     public NativeCameraView(Context context) : base(context)
     {
@@ -75,7 +81,19 @@ public sealed class NativeCameraView : FrameLayout
         Start(
             cameraOption,
             orientation,
-            (bytes, _, _, _, _) => frameCaptured(bytes),
+            (buffer, _, _, _, _, _, _, _) =>
+            {
+                try
+                {
+                    var bytes = buffer.EncodedImage;
+                    if (bytes is { Length: > 0 })
+                        frameCaptured(bytes);
+                }
+                finally
+                {
+                    buffer.Release();
+                }
+            },
             CameraCaptureOptions.Default,
             null,
             null,
@@ -85,7 +103,7 @@ public sealed class NativeCameraView : FrameLayout
     internal void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[], int, int, DateTimeOffset, CameraCaptureConfiguration> frameCaptured,
+        Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> frameCaptured,
         CameraCaptureOptions captureOptions,
         Action<CameraCaptureConfiguration> configurationSelected,
         Action captureStarted,
@@ -140,8 +158,9 @@ public sealed class NativeCameraView : FrameLayout
                     true,
                     "MissingStreamConfiguration"));
 
+            var imageFormat = ResolveImageFormat(captureOptions.FrameFormat, out _frameFormat);
             var captureSize = SelectCaptureSize(
-                configurationMap.GetOutputSizes((int)ImageFormatType.Jpeg),
+                configurationMap.GetOutputSizes((int)imageFormat),
                 captureOptions);
             _captureResolution = ToResolution(captureSize);
             _previewSize = SelectPreviewSize(
@@ -150,9 +169,15 @@ public sealed class NativeCameraView : FrameLayout
             _imageReader = ImageReader.NewInstance(
                 captureSize.Width,
                 captureSize.Height,
-                ImageFormatType.Jpeg,
-                2);
+                imageFormat,
+                captureOptions.MaxOutstandingFrames);
             _imageReader.SetOnImageAvailableListener(_imageAvailableListener, _backgroundHandler);
+            SelectNativeFrameRate();
+            _capabilities = new CameraCaptureCapabilities(
+                GetSupportedFrameFormats(configurationMap),
+                configurationMap.GetOutputSizes((int)imageFormat)
+                    .Select(ToResolution),
+                _availableFrameRateRanges);
 
             _isRunning = true;
             if (_textureView.IsAvailable)
@@ -203,6 +228,12 @@ public sealed class NativeCameraView : FrameLayout
         _captureOptions = null;
         _effectiveConfiguration = null;
         _captureResolution = CameraResolution.Default;
+        _frameFormat = CameraFrameFormat.Jpeg;
+        _nativeFrameRateRange?.Dispose();
+        _nativeFrameRateRange = null;
+        _effectiveNativeFrameRate = null;
+        _capabilities = null;
+        _availableFrameRateRanges = [];
         _lastFrameTicks = 0;
 
         if (_previewSession is not null)
@@ -311,6 +342,103 @@ public sealed class NativeCameraView : FrameLayout
         return available.First(size => ToResolution(size) == selected.Value);
     }
 
+    private static ImageFormatType ResolveImageFormat(
+        CameraFrameFormat requestedFormat,
+        out CameraFrameFormat effectiveFormat)
+    {
+        switch (requestedFormat)
+        {
+            case CameraFrameFormat.Jpeg:
+                effectiveFormat = CameraFrameFormat.Jpeg;
+                return ImageFormatType.Jpeg;
+            case CameraFrameFormat.Native:
+            case CameraFrameFormat.Yuv420:
+                effectiveFormat = CameraFrameFormat.Yuv420;
+                return ImageFormatType.Yuv420888;
+            case CameraFrameFormat.Bgra8888:
+                throw new CameraPlatformException(new CameraFailure(
+                    CameraErrorCode.SessionConfigurationFailed,
+                    "Android Camera2 does not expose a portable BGRA ImageReader output. Use Native or Yuv420.",
+                    false,
+                    "UnsupportedFrameFormat"));
+            default:
+                throw new ArgumentOutOfRangeException(nameof(requestedFormat));
+        }
+    }
+
+    private void SelectNativeFrameRate()
+    {
+        _nativeFrameRateRange?.Dispose();
+        _nativeFrameRateRange = null;
+        _effectiveNativeFrameRate = null;
+
+        var rangesObject = _cameraCharacteristics.Get(
+            CameraCharacteristics.ControlAeAvailableTargetFpsRanges);
+#pragma warning disable CA1422
+        var ranges = rangesObject is null
+            ? []
+            : JNIEnv.GetArray<Android.Util.Range>(rangesObject.Handle);
+#pragma warning restore CA1422
+        var candidates = ranges?
+            .Select(range => new
+            {
+                Native = range,
+                Common = ToFrameRateRange(range)
+            })
+            .Where(candidate => candidate.Common.HasValue)
+            .ToArray() ?? [];
+        _availableFrameRateRanges = candidates
+            .Select(candidate => candidate.Common!.Value)
+            .Distinct()
+            .ToArray();
+        if (_captureOptions.FrameRateMode == CameraFrameRateMode.PlatformDefault)
+        {
+            foreach (var candidate in candidates)
+                candidate.Native.Dispose();
+            rangesObject?.Dispose();
+            return;
+        }
+        var selected = CameraFrameRateSelector.SelectRange(
+            candidates.Select(candidate => candidate.Common!.Value),
+            _captureOptions.FrameRateMode,
+            _captureOptions.TargetFrameRate);
+        if (!selected.HasValue)
+        {
+            foreach (var candidate in candidates)
+                candidate.Native.Dispose();
+            rangesObject?.Dispose();
+            return;
+        }
+
+        var match = candidates.First(candidate => candidate.Common == selected);
+        _nativeFrameRateRange = match.Native;
+        _effectiveNativeFrameRate = selected;
+        foreach (var candidate in candidates)
+        {
+            if (!ReferenceEquals(candidate.Native, match.Native))
+                candidate.Native.Dispose();
+        }
+        rangesObject?.Dispose();
+    }
+
+    private static IEnumerable<CameraFrameFormat> GetSupportedFrameFormats(
+        StreamConfigurationMap configurationMap)
+    {
+        if (configurationMap.GetOutputSizes((int)ImageFormatType.Jpeg)?.Length > 0)
+            yield return CameraFrameFormat.Jpeg;
+        if (configurationMap.GetOutputSizes((int)ImageFormatType.Yuv420888)?.Length > 0)
+            yield return CameraFrameFormat.Yuv420;
+    }
+
+    private static CameraFrameRateRange? ToFrameRateRange(Android.Util.Range range)
+    {
+        var minimum = (range?.Lower as Integer)?.IntValue();
+        var maximum = (range?.Upper as Integer)?.IntValue();
+        return minimum > 0 && maximum >= minimum
+            ? new CameraFrameRateRange(minimum.Value, maximum.Value)
+            : null;
+    }
+
     private static Size SelectPreviewSize(
         IEnumerable<Size> sizes,
         CameraResolution captureResolution)
@@ -379,14 +507,22 @@ public sealed class NativeCameraView : FrameLayout
             _previewBuilder.Set(
                 CaptureRequest.JpegQuality,
                 new Java.Lang.Byte((sbyte)_jpegQuality.Value));
+        if (_nativeFrameRateRange is not null)
+            _previewBuilder.Set(
+                CaptureRequest.ControlAeTargetFpsRange,
+                _nativeFrameRateRange);
 #pragma warning restore CA1422
 
         _effectiveConfiguration = new CameraCaptureConfiguration(
             _captureOptions,
             _captureResolution,
             ToResolution(_previewSize),
-            _jpegQuality,
-            _minimumFrameInterval);
+            _frameFormat == CameraFrameFormat.Jpeg ? _jpegQuality : null,
+            _minimumFrameInterval,
+            _frameFormat,
+            _captureOptions.FrameDeliveryMode,
+            _effectiveNativeFrameRate,
+            _capabilities);
 
         _outputConfigurations =
         [
@@ -486,7 +622,9 @@ public sealed class NativeCameraView : FrameLayout
         global::Android.Media.Image image = null;
         try
         {
-            image = reader.AcquireLatestImage();
+            image = _captureOptions.FrameDeliveryMode == CameraFrameDeliveryMode.Sequential
+                ? reader.AcquireNextImage()
+                : reader.AcquireLatestImage();
             if (image is null)
                 return;
 
@@ -497,18 +635,43 @@ public sealed class NativeCameraView : FrameLayout
                 if (elapsed < _minimumFrameInterval.TotalSeconds) return;
                 Interlocked.Exchange(ref _lastFrameTicks, now);
             }
-            var buffer = image?.GetPlanes()?.FirstOrDefault()?.Buffer;
-            if (buffer is null)
-                return;
+            CameraFrameBuffer frameBuffer;
+            if (_frameFormat == CameraFrameFormat.Jpeg)
+            {
+                var buffer = image.GetPlanes()?.FirstOrDefault()?.Buffer;
+                if (buffer is null)
+                    return;
 
-            var bytes = new byte[buffer.Remaining()];
-            buffer.Get(bytes);
-            _frameCaptured?.Invoke(
-                bytes,
-                image.Width,
-                image.Height,
+                var bytes = new byte[buffer.Remaining()];
+                buffer.Get(bytes);
+                frameBuffer = new ManagedCameraFrameBuffer(bytes);
+            }
+            else
+            {
+                frameBuffer = new AndroidImageFrameBuffer(image);
+                image = null;
+            }
+
+            var callback = _frameCaptured;
+            if (callback is null)
+            {
+                frameBuffer.Release();
+                return;
+            }
+
+            callback(
+                frameBuffer,
+                _frameFormat,
+                frameBuffer is AndroidImageFrameBuffer nativeBuffer
+                    ? nativeBuffer.Width
+                    : image.Width,
+                frameBuffer is AndroidImageFrameBuffer nativeHeightBuffer
+                    ? nativeHeightBuffer.Height
+                    : image.Height,
                 DateTimeOffset.UtcNow,
-                _effectiveConfiguration);
+                _effectiveConfiguration,
+                _frameFormat == CameraFrameFormat.Jpeg ? 0 : GetJpegOrientation(),
+                false);
         }
         catch (IllegalStateException)
         {
@@ -525,6 +688,65 @@ public sealed class NativeCameraView : FrameLayout
         }
         finally
         {
+            image?.Close();
+            image?.Dispose();
+        }
+    }
+
+    private sealed class AndroidImageFrameBuffer : CameraFrameBuffer
+    {
+        private global::Android.Media.Image _image;
+        private readonly IntPtr[] _addresses;
+        private readonly CameraFramePlaneDescription[] _descriptions;
+
+        internal AndroidImageFrameBuffer(global::Android.Media.Image image)
+        {
+            _image = image ?? throw new ArgumentNullException(nameof(image));
+            Width = image.Width;
+            Height = image.Height;
+            var planes = image.GetPlanes() ?? [];
+            if (planes.Length == 0)
+                throw new InvalidOperationException("The YUV image exposes no planes.");
+
+            _addresses = new IntPtr[planes.Length];
+            _descriptions = new CameraFramePlaneDescription[planes.Length];
+            for (var index = 0; index < planes.Length; index++)
+            {
+                var plane = planes[index];
+                var buffer = plane.Buffer ??
+                    throw new InvalidOperationException("A YUV plane exposes no buffer.");
+                var address = buffer.GetDirectBufferAddress();
+                if (address == IntPtr.Zero)
+                    throw new InvalidOperationException("A YUV plane is not backed by a direct buffer.");
+
+                _addresses[index] = IntPtr.Add(address, buffer.Position());
+                _descriptions[index] = new CameraFramePlaneDescription(
+                    buffer.Remaining(),
+                    plane.RowStride,
+                    plane.PixelStride,
+                    index == 0 ? Width : (Width + 1) / 2,
+                    index == 0 ? Height : (Height + 1) / 2);
+            }
+        }
+
+        internal int Width { get; }
+
+        internal int Height { get; }
+
+        internal override int PlaneCount => _descriptions.Length;
+
+        internal override CameraFramePlaneDescription GetPlaneDescription(int index) =>
+            _descriptions[index];
+
+        internal override unsafe ReadOnlySpan<byte> GetPlaneSpan(int index)
+        {
+            var description = _descriptions[index];
+            return new ReadOnlySpan<byte>((void*)_addresses[index], description.Length);
+        }
+
+        protected override void DisposeCore()
+        {
+            var image = Interlocked.Exchange(ref _image, null);
             image?.Close();
             image?.Dispose();
         }

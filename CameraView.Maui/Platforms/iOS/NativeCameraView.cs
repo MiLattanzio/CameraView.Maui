@@ -4,6 +4,8 @@ using CoreImage;
 using CoreMedia;
 using CoreVideo;
 using Foundation;
+using ObjCRuntime;
+using System.Runtime.InteropServices;
 using UIKit;
 
 namespace CameraView.Maui;
@@ -16,7 +18,7 @@ public sealed class NativeCameraView : UIView
     private AVCaptureVideoPreviewLayer _previewLayer;
     private AVCaptureVideoDataOutput _videoOutput;
     private VideoCaptureDelegate _captureDelegate;
-    private Action<byte[], int, int, DateTimeOffset, CameraCaptureConfiguration> _frameCaptured;
+    private Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> _frameCaptured;
     private Action<CameraCaptureConfiguration> _configurationSelected;
     private Action _captureStarted;
     private Action _captureSuspended;
@@ -31,6 +33,12 @@ public sealed class NativeCameraView : UIView
     private bool _isRunning;
     private int _jpegQuality;
     private TimeSpan _minimumFrameInterval;
+    private CameraFrameFormat _frameFormat;
+    private CameraFrameRateRange? _effectiveNativeFrameRate;
+    private CameraCaptureCapabilities _capabilities;
+    private CameraResolution[] _availableCaptureResolutions = [];
+    private CameraFrameRateRange[] _availableFrameRateRanges = [];
+    private RawFrameCapacity _rawFrameCapacity;
 
     public override void LayoutSubviews()
     {
@@ -46,7 +54,19 @@ public sealed class NativeCameraView : UIView
         Start(
             cameraOption,
             orientation,
-            (bytes, _, _, _, _) => frameCaptured(bytes),
+            (buffer, _, _, _, _, _, _, _) =>
+            {
+                try
+                {
+                    var bytes = buffer.EncodedImage;
+                    if (bytes is { Length: > 0 })
+                        frameCaptured(bytes);
+                }
+                finally
+                {
+                    buffer.Release();
+                }
+            },
             CameraCaptureOptions.Default,
             null,
             null,
@@ -56,7 +76,7 @@ public sealed class NativeCameraView : UIView
     internal void Start(
         CameraOptions cameraOption,
         CameraOrientation orientation,
-        Action<byte[], int, int, DateTimeOffset, CameraCaptureConfiguration> frameCaptured,
+        Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset, CameraCaptureConfiguration, int, bool> frameCaptured,
         CameraCaptureOptions captureOptions,
         Action<CameraCaptureConfiguration> configurationSelected,
         Action captureStarted,
@@ -88,6 +108,7 @@ public sealed class NativeCameraView : UIView
         _configurationSelected = configurationSelected;
         _jpegQuality = captureOptions.JpegQuality ?? 85;
         _minimumFrameInterval = captureOptions.GetEffectiveMinimumFrameInterval();
+        _rawFrameCapacity = new RawFrameCapacity(captureOptions.MaxOutstandingFrames);
 
         try
         {
@@ -114,8 +135,12 @@ public sealed class NativeCameraView : UIView
                 captureOptions,
                 captureResolution,
                 captureResolution,
-                _jpegQuality,
-                _minimumFrameInterval);
+                _frameFormat == CameraFrameFormat.Jpeg ? _jpegQuality : null,
+                _minimumFrameInterval,
+                _frameFormat,
+                captureOptions.FrameDeliveryMode,
+                _effectiveNativeFrameRate,
+                _capabilities);
 
             _previewLayer = new AVCaptureVideoPreviewLayer(_captureSession)
             {
@@ -167,6 +192,12 @@ public sealed class NativeCameraView : UIView
         _configurationSelected = null;
         _captureOptions = null;
         _effectiveConfiguration = null;
+        _frameFormat = CameraFrameFormat.Jpeg;
+        _effectiveNativeFrameRate = null;
+        _capabilities = null;
+        _availableCaptureResolutions = [];
+        _availableFrameRateRanges = [];
+        _rawFrameCapacity = null;
 
         DisposeSessionObservers();
 
@@ -254,12 +285,18 @@ public sealed class NativeCameraView : UIView
             .Select(format => new
             {
                 Format = format,
-                Description = format.FormatDescription as CMVideoFormatDescription
+                Description = format.FormatDescription as CMVideoFormatDescription,
+                FrameRateRanges = format.VideoSupportedFrameRateRanges
+                    .Select(range => new CameraFrameRateRange(
+                        range.MinFrameRate,
+                        range.MaxFrameRate))
+                    .ToArray()
             })
             .Where(candidate => candidate.Description is not null)
             .Select(candidate => new
             {
                 candidate.Format,
+                candidate.FrameRateRanges,
                 Resolution = new CameraResolution(
                     candidate.Description.Dimensions.Width,
                     candidate.Description.Dimensions.Height)
@@ -278,10 +315,26 @@ public sealed class NativeCameraView : UIView
                 "ExactResolutionUnavailable"));
         }
 
-        var selectedFormat = formats
+        _availableCaptureResolutions = formats
+            .Select(candidate => candidate.Resolution)
+            .Distinct()
+            .ToArray();
+        _availableFrameRateRanges = formats
+            .SelectMany(candidate => candidate.FrameRateRanges)
+            .Distinct()
+            .ToArray();
+
+        var resolutionFormats = formats
             .Where(candidate => candidate.Resolution == selectedResolution.Value)
-            .Select(candidate => candidate.Format)
-            .First();
+            .ToArray();
+        var selectedRange = CameraFrameRateSelector.SelectRange(
+            resolutionFormats.SelectMany(candidate => candidate.FrameRateRanges),
+            captureOptions.FrameRateMode,
+            captureOptions.TargetFrameRate);
+        var selectedFormat = selectedRange.HasValue
+            ? resolutionFormats.First(candidate =>
+                candidate.FrameRateRanges.Contains(selectedRange.Value)).Format
+            : resolutionFormats.First().Format;
 
         if (!device.LockForConfiguration(out var configurationError))
         {
@@ -299,6 +352,24 @@ public sealed class NativeCameraView : UIView
         {
             device.ActiveFormat = selectedFormat;
 
+            if (selectedRange.HasValue)
+            {
+                var selectedFrameRate = CameraFrameRateSelector.SelectFrameRate(
+                    selectedRange.Value,
+                    captureOptions.FrameRateMode,
+                    captureOptions.TargetFrameRate);
+                var duration = CMTime.FromSeconds(1d / selectedFrameRate, 1_000_000);
+                device.ActiveVideoMinFrameDuration = duration;
+                device.ActiveVideoMaxFrameDuration = duration;
+                _effectiveNativeFrameRate = new CameraFrameRateRange(
+                    selectedFrameRate,
+                    selectedFrameRate);
+            }
+            else
+            {
+                _effectiveNativeFrameRate = null;
+            }
+
             if (device.IsFocusModeSupported(AVCaptureFocusMode.ContinuousAutoFocus))
                 device.FocusMode = AVCaptureFocusMode.ContinuousAutoFocus;
         }
@@ -314,29 +385,50 @@ public sealed class NativeCameraView : UIView
     private void ConfigureOutput()
     {
         _captureDelegate = new VideoCaptureDelegate(
-            (bytes, width, height, timestamp) =>
+            (buffer, format, width, height, timestamp) =>
             {
-                if (_isRunning)
+                var callback = _frameCaptured;
+                if (_isRunning && callback is not null)
                 {
-                    _frameCaptured?.Invoke(
-                        bytes,
+                    callback(
+                        buffer,
+                        format,
                         width,
                         height,
                         timestamp,
-                        _effectiveConfiguration);
+                        _effectiveConfiguration,
+                        0,
+                        _cameraOption == CameraOptions.Front);
+                }
+                else
+                {
+                    buffer.Release();
                 }
             },
             ReportFailure,
             () => _minimumFrameInterval,
-            () => _jpegQuality);
+            () => _jpegQuality,
+            () => _frameFormat,
+            _rawFrameCapacity);
         _videoOutput = new AVCaptureVideoDataOutput
         {
-            AlwaysDiscardsLateVideoFrames = true
+            AlwaysDiscardsLateVideoFrames =
+                _captureOptions.FrameDeliveryMode == CameraFrameDeliveryMode.Latest
         };
 
+        var availablePixelFormats = _videoOutput.AvailableVideoCVPixelFormatTypes
+            .ToArray();
+        var pixelFormat = ResolvePixelFormat(
+            _captureOptions.FrameFormat,
+            availablePixelFormats,
+            out _frameFormat);
+        _capabilities = new CameraCaptureCapabilities(
+            GetSupportedFrameFormats(availablePixelFormats),
+            _availableCaptureResolutions,
+            _availableFrameRateRanges);
         var settings = new CVPixelBufferAttributes
         {
-            PixelFormatType = CVPixelFormatType.CV32BGRA
+            PixelFormatType = pixelFormat
         };
         _videoOutput.WeakVideoSettings = settings.Dictionary;
 
@@ -352,6 +444,71 @@ public sealed class NativeCameraView : UIView
 
         _captureSession.AddOutput(_videoOutput);
         ConfigureConnection(_videoOutput.ConnectionFromMediaType(AVMediaTypes.Video.GetConstant()));
+    }
+
+    private static CVPixelFormatType ResolvePixelFormat(
+        CameraFrameFormat requestedFormat,
+        IReadOnlyCollection<CVPixelFormatType> availableFormats,
+        out CameraFrameFormat effectiveFormat)
+    {
+        switch (requestedFormat)
+        {
+            case CameraFrameFormat.Jpeg:
+                effectiveFormat = CameraFrameFormat.Jpeg;
+                if (availableFormats.Contains(CVPixelFormatType.CV32BGRA))
+                    return CVPixelFormatType.CV32BGRA;
+                return ResolveYuvPixelFormat(availableFormats);
+            case CameraFrameFormat.Native:
+            case CameraFrameFormat.Yuv420:
+                effectiveFormat = CameraFrameFormat.Yuv420;
+                return ResolveYuvPixelFormat(availableFormats);
+            case CameraFrameFormat.Bgra8888:
+                if (!availableFormats.Contains(CVPixelFormatType.CV32BGRA))
+                {
+                    throw new CameraPlatformException(new CameraFailure(
+                        CameraErrorCode.SessionConfigurationFailed,
+                        "This iOS camera does not expose BGRA video frames.",
+                        false,
+                        "UnsupportedFrameFormat"));
+                }
+                effectiveFormat = CameraFrameFormat.Bgra8888;
+                return CVPixelFormatType.CV32BGRA;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(requestedFormat));
+        }
+    }
+
+    private static CVPixelFormatType ResolveYuvPixelFormat(
+        IReadOnlyCollection<CVPixelFormatType> availableFormats)
+    {
+        if (availableFormats.Contains(
+                CVPixelFormatType.CV420YpCbCr8BiPlanarFullRange))
+            return CVPixelFormatType.CV420YpCbCr8BiPlanarFullRange;
+        if (availableFormats.Contains(
+                CVPixelFormatType.CV420YpCbCr8BiPlanarVideoRange))
+            return CVPixelFormatType.CV420YpCbCr8BiPlanarVideoRange;
+
+        throw new CameraPlatformException(new CameraFailure(
+            CameraErrorCode.SessionConfigurationFailed,
+            "This iOS camera does not expose an 8-bit bi-planar YUV video format.",
+            false,
+            "UnsupportedFrameFormat"));
+    }
+
+    private static IEnumerable<CameraFrameFormat> GetSupportedFrameFormats(
+        IReadOnlyCollection<CVPixelFormatType> availableFormats)
+    {
+        var supportsBgra = availableFormats.Contains(CVPixelFormatType.CV32BGRA);
+        var supportsYuv = availableFormats.Contains(
+                              CVPixelFormatType.CV420YpCbCr8BiPlanarFullRange) ||
+                          availableFormats.Contains(
+                              CVPixelFormatType.CV420YpCbCr8BiPlanarVideoRange);
+        if (supportsBgra || supportsYuv)
+            yield return CameraFrameFormat.Jpeg;
+        if (supportsYuv)
+            yield return CameraFrameFormat.Yuv420;
+        if (supportsBgra)
+            yield return CameraFrameFormat.Bgra8888;
     }
 
     private void ConfigureConnection(AVCaptureConnection connection)
@@ -485,10 +642,12 @@ public sealed class NativeCameraView : UIView
     }
 
     private sealed class VideoCaptureDelegate(
-        Action<byte[], int, int, DateTimeOffset> frameCaptured,
+        Action<CameraFrameBuffer, CameraFrameFormat, int, int, DateTimeOffset> frameCaptured,
         Action<CameraFailure> captureFailed,
         Func<TimeSpan> minimumFrameInterval,
-        Func<int> jpegQuality)
+        Func<int> jpegQuality,
+        Func<CameraFrameFormat> frameFormat,
+        RawFrameCapacity rawFrameCapacity)
         : AVCaptureVideoDataOutputSampleBufferDelegate
     {
         private readonly CIContext _imageContext = CIContext.FromOptions(null);
@@ -508,26 +667,72 @@ public sealed class NativeCameraView : UIView
                     if (elapsed < interval.TotalSeconds) return;
                     Interlocked.Exchange(ref _lastFrameTicks, now);
                 }
-                using var imageBuffer = sampleBuffer.GetImageBuffer();
+                var imageBuffer = sampleBuffer.GetImageBuffer();
                 if (imageBuffer is null)
                     return;
 
                 var pixelBuffer = imageBuffer as CVPixelBuffer;
-                var width = pixelBuffer?.Width ?? 0;
-                var height = pixelBuffer?.Height ?? 0;
-                using var image = new CIImage(imageBuffer);
-                using var cgImage = _imageContext.CreateCGImage(image, image.Extent);
-                if (cgImage is null)
-                    return;
-
-                using var uiImage = new UIImage(cgImage);
-                using var imageData = uiImage.AsJPEG(Math.Clamp(jpegQuality() / 100f, 0.01f, 1f));
-                if (imageData is not null)
+                if (pixelBuffer is null)
                 {
+                    imageBuffer.Dispose();
+                    return;
+                }
+
+                var width = (int)pixelBuffer.Width;
+                var height = (int)pixelBuffer.Height;
+                var format = frameFormat();
+                if (format == CameraFrameFormat.Jpeg)
+                {
+                    using (imageBuffer)
+                    using (var image = new CIImage(imageBuffer))
+                    using (var cgImage = _imageContext.CreateCGImage(image, image.Extent))
+                    {
+                        if (cgImage is null)
+                            return;
+
+                        using var uiImage = new UIImage(cgImage);
+                        using var imageData = uiImage.AsJPEG(
+                            Math.Clamp(jpegQuality() / 100f, 0.01f, 1f));
+                        if (imageData is not null)
+                        {
+                            frameCaptured(
+                                new ManagedCameraFrameBuffer(imageData.ToArray()),
+                                format,
+                                width,
+                                height,
+                                DateTimeOffset.UtcNow);
+                        }
+                    }
+                }
+                else
+                {
+                    if (!rawFrameCapacity.TryAcquire())
+                    {
+                        imageBuffer.Dispose();
+                        return;
+                    }
+
+                    IosPixelBufferFrameBuffer buffer;
+                    try
+                    {
+                        buffer = new IosPixelBufferFrameBuffer(
+                            sampleBuffer,
+                            pixelBuffer,
+                            format,
+                            rawFrameCapacity.Release);
+                    }
+                    catch
+                    {
+                        rawFrameCapacity.Release();
+                        imageBuffer.Dispose();
+                        throw;
+                    }
+                    sampleBuffer = null;
                     frameCaptured(
-                        imageData.ToArray(),
-                        (int)width,
-                        (int)height,
+                        buffer,
+                        format,
+                        width,
+                        height,
                         DateTimeOffset.UtcNow);
                 }
             }
@@ -535,14 +740,14 @@ public sealed class NativeCameraView : UIView
             {
                 captureFailed(new CameraFailure(
                     CameraErrorCode.CaptureFailed,
-                    "iOS could not encode a camera frame.",
+                    "iOS could not deliver a camera frame.",
                     true,
                     exception.GetType().Name,
                     exception));
             }
             finally
             {
-                sampleBuffer.Dispose();
+                sampleBuffer?.Dispose();
             }
         }
 
@@ -555,5 +760,156 @@ public sealed class NativeCameraView : UIView
 
             base.Dispose(disposing);
         }
+    }
+
+    private sealed class IosPixelBufferFrameBuffer : CameraFrameBuffer
+    {
+        private CMSampleBuffer _sampleBuffer;
+        private CVPixelBuffer _pixelBuffer;
+        private IntPtr _retainedSampleBufferHandle;
+        private Action _releaseCapacity;
+        private readonly IntPtr[] _addresses;
+        private readonly CameraFramePlaneDescription[] _descriptions;
+
+        internal IosPixelBufferFrameBuffer(
+            CMSampleBuffer sampleBuffer,
+            CVPixelBuffer pixelBuffer,
+            CameraFrameFormat format,
+            Action releaseCapacity)
+        {
+            _sampleBuffer = sampleBuffer ??
+                throw new ArgumentNullException(nameof(sampleBuffer));
+            _pixelBuffer = pixelBuffer ??
+                throw new ArgumentNullException(nameof(pixelBuffer));
+            _releaseCapacity = releaseCapacity ??
+                throw new ArgumentNullException(nameof(releaseCapacity));
+            _retainedSampleBufferHandle = sampleBuffer.Handle;
+            SafeRetain(_retainedSampleBufferHandle);
+
+            var isLocked = false;
+            try
+            {
+                var status = pixelBuffer.Lock(CVPixelBufferLock.ReadOnly);
+                if (status != CVReturn.Success)
+                    throw new InvalidOperationException(
+                        $"Unable to lock CVPixelBuffer: {status}.");
+                isLocked = true;
+
+                if (pixelBuffer.IsPlanar)
+                {
+                    var planeCount = checked((int)pixelBuffer.PlaneCount);
+                    _addresses = new IntPtr[planeCount];
+                    _descriptions = new CameraFramePlaneDescription[planeCount];
+                    for (var index = 0; index < planeCount; index++)
+                    {
+                        var planeIndex = new IntPtr(index);
+                        var width = checked((int)pixelBuffer.GetWidthOfPlane(planeIndex));
+                        var height = checked((int)pixelBuffer.GetHeightOfPlane(planeIndex));
+                        var rowStride = checked((int)pixelBuffer.GetBytesPerRowOfPlane(planeIndex));
+                        _addresses[index] = pixelBuffer.GetBaseAddress(planeIndex);
+                        _descriptions[index] = new CameraFramePlaneDescription(
+                            checked(rowStride * height),
+                            rowStride,
+                            index == 0 ? 1 : 2,
+                            width,
+                            height);
+                    }
+                }
+                else
+                {
+                    var width = checked((int)pixelBuffer.Width);
+                    var height = checked((int)pixelBuffer.Height);
+                    var rowStride = checked((int)pixelBuffer.BytesPerRow);
+                    _addresses = [pixelBuffer.BaseAddress];
+                    _descriptions =
+                    [
+                        new CameraFramePlaneDescription(
+                            checked(rowStride * height),
+                            rowStride,
+                            format == CameraFrameFormat.Bgra8888 ? 4 : 1,
+                            width,
+                            height)
+                    ];
+                }
+            }
+            catch
+            {
+                if (isLocked)
+                    pixelBuffer.Unlock(CVPixelBufferLock.ReadOnly);
+                SafeRelease(_retainedSampleBufferHandle);
+                _retainedSampleBufferHandle = IntPtr.Zero;
+                throw;
+            }
+        }
+
+        internal override int PlaneCount => _descriptions.Length;
+
+        internal override CameraFramePlaneDescription GetPlaneDescription(int index) =>
+            _descriptions[index];
+
+        internal override unsafe ReadOnlySpan<byte> GetPlaneSpan(int index)
+        {
+            var description = _descriptions[index];
+            return new ReadOnlySpan<byte>((void*)_addresses[index], description.Length);
+        }
+
+        protected override void DisposeCore()
+        {
+            var pixelBuffer = Interlocked.Exchange(ref _pixelBuffer, null);
+            if (pixelBuffer is not null)
+            {
+                pixelBuffer.Unlock(CVPixelBufferLock.ReadOnly);
+                pixelBuffer.Dispose();
+            }
+
+            Interlocked.Exchange(ref _sampleBuffer, null)?.Dispose();
+            try
+            {
+                SafeRelease(Interlocked.Exchange(
+                    ref _retainedSampleBufferHandle,
+                    IntPtr.Zero));
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _releaseCapacity, null)?.Invoke();
+            }
+        }
+
+        private static void SafeRetain(IntPtr handle)
+        {
+            if (handle != IntPtr.Zero)
+                CFRetain(handle);
+        }
+
+        private static void SafeRelease(IntPtr handle)
+        {
+            if (handle != IntPtr.Zero)
+                CFRelease(handle);
+        }
+
+        [DllImport(Constants.CoreFoundationLibrary)]
+        private static extern IntPtr CFRetain(IntPtr handle);
+
+        [DllImport(Constants.CoreFoundationLibrary)]
+        private static extern void CFRelease(IntPtr handle);
+    }
+
+    private sealed class RawFrameCapacity(int maximum)
+    {
+        private int _count;
+
+        internal bool TryAcquire()
+        {
+            while (true)
+            {
+                var count = Volatile.Read(ref _count);
+                if (count >= maximum)
+                    return false;
+                if (Interlocked.CompareExchange(ref _count, count + 1, count) == count)
+                    return true;
+            }
+        }
+
+        internal void Release() => Interlocked.Decrement(ref _count);
     }
 }

@@ -92,6 +92,8 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
 
     public event CameraResultEventHandler OnFrameResult;
 
+    public event EventHandler<CameraFrameEventArgs> FrameAvailable;
+
     public event EventHandler<CameraStateChangedEventArgs> StateChanged;
 
     public event EventHandler<CameraErrorEventArgs> ErrorOccurred;
@@ -102,32 +104,64 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
     public void SetResult(byte[] image)
     {
         if (image is { Length: > 0 })
-            InvokeFrameResult(new CameraResult(image));
+        {
+            SetFrame(
+                new ManagedCameraFrameBuffer(image),
+                CameraFrameFormat.Jpeg,
+                0,
+                0,
+                DateTimeOffset.UtcNow,
+                Orientation,
+                Camera,
+                null,
+                0,
+                false);
+        }
     }
 
     public void Cancel() => InvokeFrameResult(new CameraResult());
 
-    internal void SetResult(
-        byte[] image,
+    internal void SetFrame(
+        CameraFrameBuffer buffer,
+        CameraFrameFormat format,
         int width,
         int height,
         DateTimeOffset timestamp,
         CameraOrientation orientation,
         CameraOptions camera,
-        CameraCaptureConfiguration configuration)
+        CameraCaptureConfiguration configuration,
+        int rotationDegrees,
+        bool isMirrored)
     {
-        if (image is not { Length: > 0 })
-            return;
-
-        InvokeFrameResult(new CameraResult(
-            image,
+        var sequenceNumber = Interlocked.Increment(ref _sequenceNumber);
+        using var frame = new CameraFrame(
+            buffer,
+            format,
             width,
             height,
             timestamp,
             orientation,
             camera,
-            Interlocked.Increment(ref _sequenceNumber),
-            configuration));
+            sequenceNumber,
+            configuration,
+            rotationDegrees,
+            isMirrored);
+
+        InvokeFrameAvailable(frame);
+
+        var image = buffer.EncodedImage;
+        if (format == CameraFrameFormat.Jpeg && image is { Length: > 0 })
+        {
+            InvokeFrameResult(new CameraResult(
+                image,
+                width,
+                height,
+                timestamp,
+                orientation,
+                camera,
+                sequenceNumber,
+                configuration));
+        }
     }
 
     internal void SetEffectiveConfiguration(CameraCaptureConfiguration configuration)
@@ -182,6 +216,27 @@ public sealed class CameraView : Microsoft.Maui.Controls.View
             try
             {
                 handler(result);
+            }
+            catch (Exception exception)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Camera frame subscriber failed: {exception}");
+            }
+        }
+    }
+
+    private void InvokeFrameAvailable(CameraFrame frame)
+    {
+        var handlers = FrameAvailable;
+        if (handlers is null)
+            return;
+
+        foreach (EventHandler<CameraFrameEventArgs> handler in handlers.GetInvocationList())
+        {
+            using var subscriberFrame = frame.Retain();
+            try
+            {
+                handler(this, new CameraFrameEventArgs(subscriberFrame));
             }
             catch (Exception exception)
             {

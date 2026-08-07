@@ -38,14 +38,20 @@ Android reports `Running` only after Camera2 accepts the repeating capture reque
 
 iOS reports `Running` after `AVCaptureSession.StartRunning` succeeds. AVFoundation runtime errors and interruption notifications move the observable state to `Failed` or `Suspended`; interruption recovery reports `Running` only after the native session is running again.
 
-State and error events are marshalled through the view dispatcher. JPEG frames remain on the native capture queue for throughput.
+State and error events are marshalled through the view dispatcher. JPEG and raw frames remain on the native capture queue for throughput.
 
 ## Frame pipeline
 
-Android requests a JPEG output from `ImageReader`. iOS converts captured pixel buffers to JPEG through Core Image and UIKit. Both implementations invoke the managed callback from their capture queue.
+The default remains the compatible JPEG pipeline. Android requests JPEG from `ImageReader`; iOS converts a BGRA pixel buffer through Core Image and UIKit. `OnFrameResult` receives the same managed `byte[]` contract as versions 1.0 through 1.2.1.
+
+The opt-in raw pipeline avoids encoding and decoding. Android requests `YUV_420_888` and exposes direct addresses for the native Y, U, and V planes. iOS requests 8-bit bi-planar YUV (NV12), or BGRA when explicitly selected, retains the `CMSampleBuffer`, locks the `CVPixelBuffer` for read access, and exposes its native planes. `CameraFramePlane.Span` therefore performs no per-frame copy and retained leases remain valid after the AVFoundation delegate returns.
+
+Each native buffer begins with one internal reference. `CameraView` creates a separate short-lived `CameraFrame` lease for every `FrameAvailable` subscriber, then releases it when that subscriber returns. `Retain()` increments the buffer reference and returns an independently disposable frame for asynchronous work. The Android `Image` or iOS `CVPixelBuffer` is closed/unlocked only when the final lease is disposed; a finalizer is a safety net, not a processing strategy.
 
 Capture-size negotiation uses the native sizes exposed by the selected device. `Closest` scores both aspect-ratio and pixel-count differences; `AtMost` and `AtLeast` first constrain dimensions, while `Exact` rejects an unsupported request. Android independently chooses a preview buffer closest to the negotiated capture aspect ratio. iOS selects an `AVCaptureDeviceFormat` and uses input-priority session configuration, so the reported resolution comes from the active device format rather than a presumed preset.
 
-Delivery throttling uses a monotonic clock. Android acquires and closes the latest `ImageReader` image even when dropping it, preventing producer backpressure. iOS relies on `AlwaysDiscardsLateVideoFrames` and drops samples before JPEG encoding. Neither platform creates a managed frame backlog.
+Native frame-rate negotiation and managed delivery throttling are independent. `FrameRateMode` selects a Camera2 AE target range or exact AVFoundation frame duration. Delivery throttling uses a monotonic clock after native production. Android acquires and closes the latest `ImageReader` image even when dropping it; iOS drops samples before JPEG encoding or raw-frame leasing.
 
-Consumers should avoid expensive synchronous work in `OnFrameResult`. Copy or enqueue the byte array when additional processing is required, and marshal only UI updates to the main thread.
+`FrameDeliveryMode.Latest` uses `AcquireLatestImage` and `AlwaysDiscardsLateVideoFrames`, prioritizing latency without a managed backlog. `Sequential` requests producer order, while `MaxOutstandingFrames` limits retained Android buffers. Holding every native buffer may temporarily stall delivery by design rather than allowing unbounded allocation.
+
+Consumers should avoid expensive synchronous work in either frame callback. JPEG byte arrays are independently owned and can be queued into a bounded channel. Raw frames should normally be consumed synchronously; asynchronous consumers call `Retain()` and must dispose the lease. Only UI updates are marshalled to the main thread.

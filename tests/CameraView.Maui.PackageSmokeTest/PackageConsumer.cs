@@ -41,6 +41,33 @@ public static class PackageConsumer
                 consumeFrame(result.Image);
             }
         };
+        preview.FrameAvailable += (_, eventArgs) =>
+        {
+            var frame = eventArgs.Frame;
+            _ = frame.Format;
+            _ = frame.Width;
+            _ = frame.Height;
+            _ = frame.Timestamp;
+            _ = frame.Orientation;
+            _ = frame.Camera;
+            _ = frame.SequenceNumber;
+            _ = frame.Configuration;
+            _ = frame.RotationDegrees;
+            _ = frame.IsMirrored;
+            _ = frame.IsDisposed;
+            foreach (var plane in frame.Planes)
+            {
+                _ = plane.Length;
+                _ = plane.RowStride;
+                _ = plane.PixelStride;
+                _ = plane.Width;
+                _ = plane.Height;
+                _ = plane.Span.Length;
+            }
+
+            using var retained = frame.Retain();
+            _ = retained.Planes[0].ToArray();
+        };
         preview.StateChanged += (_, eventArgs) =>
         {
             _ = eventArgs.PreviousState;
@@ -66,6 +93,14 @@ public static class PackageConsumer
             _ = eventArgs.Configuration?.MinimumFrameInterval;
             _ = eventArgs.Configuration?.MaximumFrameRate;
             _ = eventArgs.Configuration?.UsedResolutionFallback;
+            _ = eventArgs.Configuration?.FrameFormat;
+            _ = eventArgs.Configuration?.FrameDeliveryMode;
+            _ = eventArgs.Configuration?.NativeFrameRate;
+            _ = eventArgs.Configuration?.UsedFrameFormatFallback;
+            _ = eventArgs.Configuration?.Capabilities.FrameFormats;
+            _ = eventArgs.Configuration?.Capabilities.CaptureResolutions;
+            _ = eventArgs.Configuration?.Capabilities.FrameRateRanges;
+            _ = eventArgs.Configuration?.Capabilities.MaximumFrameRate;
         };
 
         _ = preview.State;

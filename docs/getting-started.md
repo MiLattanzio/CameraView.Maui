@@ -116,6 +116,39 @@ CameraPreview.EffectiveConfigurationChanged += (_, args) =>
 
 `Closest`, `AtMost`, and `AtLeast` provide deterministic fallback. Choose `Exact` when a different size must be treated as a configuration failure.
 
+## High-throughput frame processing
+
+JPEG remains the default. For OCR, barcode, or ML processors that accept luminance/YUV input, switch to the realtime profile and use `FrameAvailable`:
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Realtime;
+CameraPreview.FrameAvailable += OnFrameAvailable;
+
+private void OnFrameAvailable(object? sender, CameraFrameEventArgs args)
+{
+    CameraFrame frame = args.Frame;
+    CameraFramePlane yPlane = frame.Planes[0];
+    ProcessLuminance(
+        yPlane.Span,
+        yPlane.Width,
+        yPlane.Height,
+        yPlane.RowStride,
+        frame.RotationDegrees);
+}
+```
+
+The event frame is borrowed and valid only during the handler. For asynchronous processing, create and dispose a retained lease:
+
+```csharp
+private async void OnFrameAvailable(object? sender, CameraFrameEventArgs args)
+{
+    using CameraFrame retained = args.Frame.Retain();
+    await Task.Run(() => ProcessFrame(retained));
+}
+```
+
+Do not retain an unbounded number of frames. `Latest` delivery prioritizes the newest camera buffer, while `MaxOutstandingFrames` limits native memory pressure. Read `EffectiveConfiguration.FrameFormat`, `NativeFrameRate`, and `Capabilities` to see what the selected camera actually supports.
+
 ## 7. Observe camera state and errors
 
 `StateChanged` and `ErrorOccurred` run through the MAUI dispatcher, so their handlers can update page controls directly:

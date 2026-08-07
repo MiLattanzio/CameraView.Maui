@@ -1,6 +1,6 @@
 # CameraView.Maui
 
-CameraView.Maui is a .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation and emits encoded JPEG frames through `OnFrameResult`.
+CameraView.Maui is a .NET MAUI camera preview control for Android and iOS. It uses Camera2 and AVFoundation and emits encoded JPEG frames or zero-copy native camera buffers.
 
 The package supports .NET 9 and .NET 10 MAUI applications.
 
@@ -84,6 +84,27 @@ var path = Path.Combine(FileSystem.CacheDirectory, "camera-frame.jpg");
 await File.WriteAllBytesAsync(path, result.Image);
 ```
 
+## High-throughput raw frames
+
+Use the opt-in realtime profile for OCR, barcode, computer-vision, and ML workloads that can consume luminance or YUV data directly:
+
+```csharp
+CameraPreview.CaptureOptions = CameraCaptureOptions.Realtime;
+CameraPreview.FrameAvailable += (_, args) =>
+{
+    CameraFrame frame = args.Frame;
+    CameraFramePlane yPlane = frame.Planes[0];
+    AnalyzeLuminance(
+        yPlane.Span,
+        yPlane.Width,
+        yPlane.Height,
+        yPlane.RowStride,
+        frame.RotationDegrees);
+};
+```
+
+The event frame is borrowed. Access it synchronously, or call `Retain()` before asynchronous work and dispose the retained frame afterward. `Native` resolves to YUV on both platforms: Android supplies three `YUV_420_888` planes and iOS supplies two NV12 planes. Inspect `EffectiveConfiguration.Capabilities` before requesting optional formats such as `Bgra8888`.
+
 ## Processing frames
 
 Frames can arrive faster than OCR, barcode, ML, upload, or disk processing can finish. Avoid starting an unlimited number of tasks. This gate drops incoming frames while one frame is being processed:
@@ -149,7 +170,7 @@ CameraPreview.ErrorOccurred += (_, args) =>
     ErrorLabel.Text = $"{args.Code}: {args.Message}";
 ```
 
-`StateChanged` and `ErrorOccurred` run through the MAUI dispatcher. `State` can be `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, or `Failed`; `IsRunning` is true only for an active native session. `OnFrameResult` remains on the native capture queue.
+`StateChanged` and `ErrorOccurred` run through the MAUI dispatcher. `State` can be `Stopped`, `Starting`, `Running`, `Suspended`, `PermissionDenied`, or `Failed`; `IsRunning` is true only for an active native session. `OnFrameResult` and `FrameAvailable` remain on the native capture queue.
 
 ## Capture configuration
 

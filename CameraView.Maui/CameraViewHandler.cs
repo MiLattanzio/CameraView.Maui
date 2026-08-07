@@ -180,15 +180,19 @@ public partial class CameraViewHandler : ViewHandler<CameraView, NativeCameraVie
             platformView.Start(
                 selectedCamera,
                 selectedOrientation,
-                (image, width, height, timestamp, configuration) =>
-                    cameraView.SetResult(
-                        image,
+                (buffer, format, width, height, timestamp, configuration,
+                    rotationDegrees, isMirrored) =>
+                    cameraView.SetFrame(
+                        buffer,
+                        format,
                         width,
                         height,
                         timestamp,
                         selectedOrientation,
                         selectedCamera,
-                        configuration),
+                        configuration,
+                        rotationDegrees,
+                        isMirrored),
                 captureOptions,
                 configuration => DispatchEffectiveConfiguration(
                     platformView,
