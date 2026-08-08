@@ -1,9 +1,8 @@
 namespace CameraView.Maui;
 
 internal readonly record struct CameraPreviewTransform(
-    float ScaleX,
-    float ScaleY,
-    float RotationDegrees,
+    int Width,
+    int Height,
     int RelativeRotationDegrees,
     bool IsMirrored);
 
@@ -52,52 +51,19 @@ internal static class CameraPreviewTransformCalculator
             sensorOrientation,
             displayRotation,
             isFrontFacing);
+        // SurfaceView applies sensor orientation and display rotation itself. Size
+        // the view to the oriented source aspect and enlarge it uniformly until it
+        // covers the container; the parent clips only the overflowing dimension.
         var swapsAxes = relativeRotation % 180 != 0;
-
-        float defaultScaleX;
-        float defaultScaleY;
-
-        // TextureView already applies the sensor orientation, but stretches the
-        // result to its bounds. These factors describe that implicit scaling so
-        // the matrix below can undo it before applying a uniform aspect-fill.
-        if (sensorOrientation % 180 == 0)
-        {
-            defaultScaleX = swapsAxes
-                ? (float)viewWidth / previewWidth
-                : (float)viewWidth / previewHeight;
-            defaultScaleY = swapsAxes
-                ? (float)viewHeight / previewHeight
-                : (float)viewHeight / previewWidth;
-        }
-        else
-        {
-            defaultScaleX = swapsAxes
-                ? (float)viewWidth / previewHeight
-                : (float)viewWidth / previewWidth;
-            defaultScaleY = swapsAxes
-                ? (float)viewHeight / previewWidth
-                : (float)viewHeight / previewHeight;
-        }
-
-        var aspectFillScale = Math.Max(defaultScaleX, defaultScaleY);
-        float scaleX;
-        float scaleY;
-
-        if (swapsAxes)
-        {
-            scaleX = aspectFillScale / defaultScaleX;
-            scaleY = aspectFillScale / defaultScaleY;
-        }
-        else
-        {
-            scaleX = (float)viewHeight / viewWidth / defaultScaleY * aspectFillScale;
-            scaleY = (float)viewWidth / viewHeight / defaultScaleX * aspectFillScale;
-        }
+        var displayedSourceWidth = swapsAxes ? previewHeight : previewWidth;
+        var displayedSourceHeight = swapsAxes ? previewWidth : previewHeight;
+        var aspectFillScale = Math.Max(
+            viewWidth / (float)displayedSourceWidth,
+            viewHeight / (float)displayedSourceHeight);
 
         return new CameraPreviewTransform(
-            scaleX,
-            scaleY,
-            -displayRotation,
+            Math.Max(viewWidth, (int)Math.Ceiling(displayedSourceWidth * aspectFillScale)),
+            Math.Max(viewHeight, (int)Math.Ceiling(displayedSourceHeight * aspectFillScale)),
             relativeRotation,
             isPreviewMirrored);
     }

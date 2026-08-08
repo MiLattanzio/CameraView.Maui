@@ -71,7 +71,7 @@ internal static class CameraResolutionSelector
 
     public static CameraResolution? SelectPreviewResolution(
         IEnumerable<CameraResolution> availableResolutions,
-        CameraResolution captureResolution)
+        CameraResolution previewTarget)
     {
         var available = availableResolutions
             .Where(resolution => !resolution.IsDefault)
@@ -81,7 +81,7 @@ internal static class CameraResolutionSelector
             return null;
 
         return available
-            .OrderBy(resolution => SelectionScore(resolution, captureResolution))
+            .OrderBy(resolution => SelectionScore(resolution, previewTarget))
             .ThenByDescending(resolution => resolution.PixelCount)
             .First();
     }

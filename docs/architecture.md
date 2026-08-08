@@ -4,7 +4,7 @@
 
 `CameraView` is the cross-platform MAUI view. Its bindable properties are mapped by `CameraViewHandler` to a platform-specific `NativeCameraView`:
 
-- Android uses Camera2, `TextureView`, and `ImageReader`.
+- Android uses Camera2, `SurfaceView`, and `ImageReader`.
 - iOS uses `AVCaptureSession`, `AVCaptureVideoPreviewLayer`, and `AVCaptureVideoDataOutput`.
 
 Changing camera, orientation, enabled state, or the immutable `CaptureOptions` value increments a configuration version. Asynchronous permission and camera-start work verifies this version before touching the current native view. Stale operations and stale configuration callbacks therefore cannot restart a camera or replace effective settings after a newer configuration has been applied.
@@ -50,7 +50,7 @@ The opt-in raw pipeline avoids encoding and decoding. Android requests `YUV_420_
 
 Each native buffer begins with one internal reference. `CameraView` creates a separate short-lived `CameraFrame` lease for every `FrameAvailable` subscriber, then releases it when that subscriber returns. `Retain()` increments the buffer reference and returns an independently disposable frame for asynchronous work. The Android `Image` or iOS `CVPixelBuffer` is closed/unlocked only when the final lease is disposed; a finalizer is a safety net, not a processing strategy.
 
-Capture-size negotiation uses the native sizes exposed by the selected device. `Closest` scores both aspect-ratio and pixel-count differences; `AtMost` and `AtLeast` first constrain dimensions, while `Exact` rejects an unsupported request. Android independently chooses a preview buffer closest to the negotiated capture aspect ratio. iOS selects an `AVCaptureDeviceFormat` and uses input-priority session configuration, so the reported resolution comes from the active device format rather than a presumed preset.
+Capture-size negotiation uses the native sizes exposed by the selected device. `Closest` scores both aspect-ratio and pixel-count differences; `AtMost` and `AtLeast` first constrain dimensions, while `Exact` rejects an unsupported request. Android independently chooses a stable 720p-or-closest preview buffer, so changing processing resolution or frame format does not reshape the viewfinder. Its `SurfaceView` is centred at the oriented source aspect ratio, enlarged by one uniform fill factor, and clipped by its parent only along the overflowing dimension. iOS selects an `AVCaptureDeviceFormat` and uses input-priority session configuration, so the reported resolution comes from the active device format rather than a presumed preset.
 
 Native frame-rate negotiation and managed delivery throttling are independent. `FrameRateMode` selects a Camera2 AE target range or exact AVFoundation frame duration. Delivery throttling uses a monotonic clock after native production. Android acquires and closes the latest `ImageReader` image even when dropping it; iOS drops samples before JPEG encoding or raw-frame leasing.
 

@@ -77,6 +77,13 @@ AssertResolution(
         new CameraResolution(1600, 1200)),
     "Preview selection must account for aspect ratio as well as pixel count.");
 
+AssertResolution(
+    CameraResolution.Hd720p,
+    CameraResolutionSelector.SelectPreviewResolution(
+        available,
+        CameraResolution.Hd720p),
+    "The stable Android preview target must remain independent from capture profiles.");
+
 var interval = new CameraCaptureOptions
 {
     MaximumFrameRate = 10,
@@ -280,9 +287,8 @@ var portraitTransform = CameraPreviewTransformCalculator.Calculate(
     90,
     0,
     false);
-AssertClose(1f, portraitTransform.ScaleX, "Portrait X correction is incorrect.");
-AssertClose(16f / 15f, portraitTransform.ScaleY, "Portrait Y correction is incorrect.");
-AssertClose(0f, portraitTransform.RotationDegrees, "Natural orientation must not add display rotation.");
+AssertEqual(1080, portraitTransform.Width, "Portrait preview width is incorrect.");
+AssertEqual(1920, portraitTransform.Height, "Portrait preview height is incorrect.");
 
 var landscapeTransform = CameraPreviewTransformCalculator.Calculate(
     1800,
@@ -292,9 +298,8 @@ var landscapeTransform = CameraPreviewTransformCalculator.Calculate(
     90,
     90,
     false);
-AssertClose(3f / 5f, landscapeTransform.ScaleX, "Landscape X correction is incorrect.");
-AssertClose(16f / 9f, landscapeTransform.ScaleY, "Landscape Y correction is incorrect.");
-AssertClose(-90f, landscapeTransform.RotationDegrees, "Landscape display rotation is incorrect.");
+AssertEqual(1920, landscapeTransform.Width, "Landscape preview width is incorrect.");
+AssertEqual(1080, landscapeTransform.Height, "Landscape preview height is incorrect.");
 
 var mirroredTransform = CameraPreviewTransformCalculator.Calculate(
     1080,
@@ -305,8 +310,29 @@ var mirroredTransform = CameraPreviewTransformCalculator.Calculate(
     0,
     true,
     true);
-if (!mirroredTransform.IsMirrored || mirroredTransform.ScaleX <= 0)
-    throw new InvalidOperationException("A mirrored preview must preserve scale and request a final horizontal flip.");
+if (!mirroredTransform.IsMirrored || mirroredTransform.Width <= 0)
+    throw new InvalidOperationException("A mirrored preview must preserve layout and request a final horizontal flip.");
+
+var standardTransform = CameraPreviewTransformCalculator.Calculate(
+    1080,
+    1800,
+    1600,
+    1200,
+    90,
+    0,
+    false);
+var widescreenTransformAfterProfileChange = CameraPreviewTransformCalculator.Calculate(
+    1080,
+    1800,
+    1920,
+    1080,
+    90,
+    0,
+    false);
+if (standardTransform == portraitTransform)
+    throw new InvalidOperationException("A 4:3 preview must not reuse the 16:9 preview transform.");
+if (widescreenTransformAfterProfileChange != portraitTransform)
+    throw new InvalidOperationException("Returning to a preview profile must restore its original transform.");
 
 Console.WriteLine("Validated capture options, interactive controls, frame rates, resolution negotiation, and preview transforms.");
 
@@ -365,15 +391,6 @@ static void AssertFrameRateRange(
     {
         throw new InvalidOperationException(
             $"{message} Expected {expected}, actual {actual?.ToString() ?? "null"}.");
-    }
-}
-
-static void AssertClose(float expected, float actual, string message)
-{
-    if (Math.Abs(expected - actual) > 0.0001f)
-    {
-        throw new InvalidOperationException(
-            $"{message} Expected {expected}, actual {actual}.");
     }
 }
 

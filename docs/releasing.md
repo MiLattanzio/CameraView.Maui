@@ -32,8 +32,8 @@ The policy and workflow environment must match exactly. No `NUGET_API_KEY` secre
 4. Create and push an annotated SemVer tag:
 
 ```shell
-git tag -a v1.3.0 -m "CameraView.Maui 1.3.0"
-git push origin v1.3.0
+git tag -a v1.3.1 -m "CameraView.Maui 1.3.1"
+git push origin v1.3.1
 ```
 
 5. Create and publish the GitHub release for that tag. A tag push by itself never publishes to NuGet.org.

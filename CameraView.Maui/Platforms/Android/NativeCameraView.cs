@@ -17,8 +17,9 @@ namespace CameraView.Maui;
 
 public sealed class NativeCameraView : FrameLayout
 {
-    private readonly TextureView _textureView;
-    private readonly CameraSurfaceTextureListener _surfaceTextureListener;
+    private readonly FrameLayout _previewHost;
+    private readonly SurfaceView _surfaceView;
+    private readonly CameraSurfaceHolderCallback _surfaceHolderCallback;
     private readonly CameraStateListener _cameraStateListener;
     private readonly ImageAvailableListener _imageAvailableListener;
     private readonly DisplayRotationListener _displayRotationListener;
@@ -63,21 +64,24 @@ public sealed class NativeCameraView : FrameLayout
 
     public NativeCameraView(Context context) : base(context)
     {
-        _textureView = new TextureView(context);
-        _surfaceTextureListener = new CameraSurfaceTextureListener(this);
+        _previewHost = new FrameLayout(context);
+        _previewHost.SetClipChildren(true);
+        _previewHost.SetClipToPadding(true);
+        _surfaceView = new SurfaceView(context);
+        _surfaceHolderCallback = new CameraSurfaceHolderCallback(this);
         _cameraStateListener = new CameraStateListener(this);
         _imageAvailableListener = new ImageAvailableListener(this);
         _displayRotationListener = new DisplayRotationListener(this);
         _mainHandler = new Handler(Looper.MainLooper);
-        _textureView.SurfaceTextureListener = _surfaceTextureListener;
+        _surfaceView.Holder.AddCallback(_surfaceHolderCallback);
 
-        var previewLayout = new FrameLayout.LayoutParams(
+        var hostLayout = new FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MatchParent,
             ViewGroup.LayoutParams.MatchParent)
         {
             Gravity = GravityFlags.Center
         };
-        AddView(_textureView, previewLayout);
+        AddView(_previewHost, hostLayout);
     }
 
     public void Start(
@@ -183,7 +187,7 @@ public sealed class NativeCameraView : FrameLayout
             _captureResolution = ToResolution(captureSize);
             _previewSize = SelectPreviewSize(
                 configurationMap.GetOutputSizes(Class.FromType(typeof(SurfaceTexture))),
-                _captureResolution);
+                CameraResolution.Hd720p);
             _imageReader = ImageReader.NewInstance(
                 captureSize.Width,
                 captureSize.Height,
@@ -198,9 +202,7 @@ public sealed class NativeCameraView : FrameLayout
                 _availableFrameRateRanges);
 
             _isRunning = true;
-            if (_textureView.IsAvailable)
-                ConfigureTransform(_textureView.Width, _textureView.Height);
-
+            ConfigureTransform(Width, Height);
             _cameraManager.OpenCamera(cameraId, _cameraStateListener, _backgroundHandler);
         }
         catch (CameraPlatformException)
@@ -258,7 +260,7 @@ public sealed class NativeCameraView : FrameLayout
             var focusChanged = previousControls?.FocusMode != effectiveControls.FocusMode ||
                                previousControls?.FocusPoint != effectiveControls.FocusPoint;
             _effectiveControls = effectiveControls;
-            ConfigureTransform(_textureView.Width, _textureView.Height);
+            ConfigureTransform(Width, Height);
             if (_previewBuilder is not null && _previewSession is not null)
             {
                 ApplyControlsToBuilder(_previewBuilder);
@@ -269,7 +271,7 @@ public sealed class NativeCameraView : FrameLayout
         catch (CameraAccessException exception)
         {
             _effectiveControls = previousControls;
-            ConfigureTransform(_textureView.Width, _textureView.Height);
+            ConfigureTransform(Width, Height);
             controlsFailed?.Invoke(new CameraFailure(
                 CameraErrorCode.ControlConfigurationFailed,
                 "Android could not apply the requested camera controls.",
@@ -280,7 +282,7 @@ public sealed class NativeCameraView : FrameLayout
         catch (System.Exception exception)
         {
             _effectiveControls = previousControls;
-            ConfigureTransform(_textureView.Width, _textureView.Height);
+            ConfigureTransform(Width, Height);
             controlsFailed?.Invoke(new CameraFailure(
                 CameraErrorCode.ControlConfigurationFailed,
                 "Android could not apply the requested camera controls.",
@@ -346,7 +348,6 @@ public sealed class NativeCameraView : FrameLayout
         _imageReader?.Dispose();
         _imageReader = null;
 
-        _previewSurface?.Dispose();
         _previewSurface = null;
         _cameraCharacteristics = null;
         _previewSize = null;
@@ -369,7 +370,13 @@ public sealed class NativeCameraView : FrameLayout
     {
         base.OnAttachedToWindow();
         RegisterDisplayListener();
-        ConfigureTransform(_textureView.Width, _textureView.Height);
+        ConfigureTransform(Width, Height);
+    }
+
+    protected override void OnSizeChanged(int width, int height, int oldWidth, int oldHeight)
+    {
+        base.OnSizeChanged(width, height, oldWidth, oldHeight);
+        ConfigureTransform(width, height);
     }
 
     protected override void OnDetachedFromWindow()
@@ -587,12 +594,12 @@ public sealed class NativeCameraView : FrameLayout
 
     private static Size SelectPreviewSize(
         IEnumerable<Size> sizes,
-        CameraResolution captureResolution)
+        CameraResolution previewTarget)
     {
         var available = RequireSizes(sizes);
         var selected = CameraResolutionSelector.SelectPreviewResolution(
             available.Select(ToResolution),
-            captureResolution)
+            previewTarget)
             ?? throw new CameraPlatformException(new CameraFailure(
                 CameraErrorCode.SessionConfigurationFailed,
                 "The camera exposes no compatible preview size.",
@@ -623,7 +630,6 @@ public sealed class NativeCameraView : FrameLayout
     {
         if (!_isRunning ||
             _cameraDevice is null ||
-            !_textureView.IsAvailable ||
             _previewSize is null ||
             _imageReader is null)
             return;
@@ -631,14 +637,17 @@ public sealed class NativeCameraView : FrameLayout
         _previewSession?.Close();
         _previewSession?.Dispose();
         _previewSession = null;
-        _previewSurface?.Dispose();
-
-        var texture = _textureView.SurfaceTexture;
-        if (texture is null)
+        var holderSurface = _surfaceView.Holder.Surface;
+        if (holderSurface is null || !holderSurface.IsValid)
             return;
 
-        texture.SetDefaultBufferSize(_previewSize.Width, _previewSize.Height);
-        _previewSurface = new Surface(texture);
+        _surfaceView.Holder.SetFixedSize(_previewSize.Width, _previewSize.Height);
+        _mainHandler.Post(() =>
+        {
+            if (_isRunning)
+                ConfigureTransform(Width, Height);
+        });
+        _previewSurface = holderSurface;
 
         _previewBuilder?.Dispose();
         _previewBuilder = _cameraDevice.CreateCaptureRequest(CameraTemplate.Preview);
@@ -835,7 +844,7 @@ public sealed class NativeCameraView : FrameLayout
             return null;
 
         var displayRotation = GetDisplayRotationDegrees(
-            _textureView.Display?.Rotation ?? SurfaceOrientation.Rotation0);
+            _surfaceView.Display?.Rotation ?? SurfaceOrientation.Rotation0);
         var sensorOrientation =
             (_cameraCharacteristics.Get(CameraCharacteristics.SensorOrientation)
                 as Integer)?.IntValue() ?? 0;
@@ -845,8 +854,8 @@ public sealed class NativeCameraView : FrameLayout
             _cameraOption == CameraOptions.Front);
         var sensorPoint = CameraControlPointMapper.ToSensorPoint(
             previewPoint,
-            _textureView.Width,
-            _textureView.Height,
+            Width,
+            Height,
             _previewSize?.Width ?? 1,
             _previewSize?.Height ?? 1,
             relativeRotation,
@@ -1098,7 +1107,7 @@ public sealed class NativeCameraView : FrameLayout
             viewHeight == 0)
             return;
 
-        var rotation = _textureView.Display?.Rotation ?? SurfaceOrientation.Rotation0;
+        var rotation = _surfaceView.Display?.Rotation ?? SurfaceOrientation.Rotation0;
         var sensorValue = _cameraCharacteristics.Get(
             CameraCharacteristics.SensorOrientation) as Integer;
         var facingValue = _cameraCharacteristics.Get(
@@ -1113,19 +1122,24 @@ public sealed class NativeCameraView : FrameLayout
             facingValue?.IntValue() == (int)LensFacing.Front,
             _effectiveControls?.IsPreviewMirrored == true);
 
-        var centerX = viewWidth / 2f;
-        var centerY = viewHeight / 2f;
-        var matrix = new Matrix();
-        matrix.SetScale(transform.ScaleX, transform.ScaleY, centerX, centerY);
-        matrix.PostRotate(transform.RotationDegrees, centerX, centerY);
-        if (transform.IsMirrored)
-            matrix.PostScale(-1, 1, centerX, centerY);
-        _textureView.SetTransform(matrix);
+        var previewLayout = new FrameLayout.LayoutParams(
+            transform.Width,
+            transform.Height)
+        {
+            Gravity = GravityFlags.Center
+        };
+        if (_surfaceView.Parent is null)
+            _previewHost.AddView(_surfaceView, previewLayout);
+        else if (_surfaceView.LayoutParameters is not FrameLayout.LayoutParams currentLayout ||
+                 currentLayout.Width != transform.Width ||
+                 currentLayout.Height != transform.Height)
+            _surfaceView.LayoutParameters = previewLayout;
+        _previewHost.ScaleX = transform.IsMirrored ? -1f : 1f;
     }
 
     private int GetJpegOrientation()
     {
-        var rotation = _textureView.Display?.Rotation ?? SurfaceOrientation.Rotation0;
+        var rotation = _surfaceView.Display?.Rotation ?? SurfaceOrientation.Rotation0;
         var displayDegrees = GetDisplayRotationDegrees(rotation);
         var sensorValue = _cameraCharacteristics?.Get(CameraCharacteristics.SensorOrientation) as Integer;
         var sensorDegrees = sensorValue?.IntValue() ?? 0;
@@ -1161,11 +1175,11 @@ public sealed class NativeCameraView : FrameLayout
 
     private void OnDisplayChanged(int displayId)
     {
-        var display = _textureView.Display;
+        var display = _surfaceView.Display;
         if (display is null || display.DisplayId != displayId)
             return;
 
-        ConfigureTransform(_textureView.Width, _textureView.Height);
+        ConfigureTransform(Width, Height);
     }
 
     private void StartBackgroundThread()
@@ -1267,21 +1281,22 @@ public sealed class NativeCameraView : FrameLayout
                 error.ToString())
         };
 
-    private sealed class CameraSurfaceTextureListener(NativeCameraView owner)
-        : Java.Lang.Object, TextureView.ISurfaceTextureListener
+    private sealed class CameraSurfaceHolderCallback(NativeCameraView owner)
+        : Java.Lang.Object, ISurfaceHolderCallback
     {
-        public void OnSurfaceTextureAvailable(SurfaceTexture surface, int width, int height)
+        public void SurfaceCreated(ISurfaceHolder holder)
         {
-            owner.ConfigureTransform(width, height);
+            owner.ConfigureTransform(owner.Width, owner.Height);
             owner.TryStartPreview();
         }
 
-        public bool OnSurfaceTextureDestroyed(SurfaceTexture surface) => true;
+        public void SurfaceChanged(
+            ISurfaceHolder holder,
+            Format format,
+            int width,
+            int height) => owner.ConfigureTransform(owner.Width, owner.Height);
 
-        public void OnSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) =>
-            owner.ConfigureTransform(width, height);
-
-        public void OnSurfaceTextureUpdated(SurfaceTexture surface)
+        public void SurfaceDestroyed(ISurfaceHolder holder)
         {
         }
     }

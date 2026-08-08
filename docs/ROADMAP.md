@@ -21,8 +21,9 @@ Public member names shown below are provisional until their implementation is re
 | 1.1.0 | .NET 10 and camera diagnostics | Released 2026-08-06 |
 | 1.2.0 | Capture configuration and frame metadata | GitHub release 2026-08-06; not published to NuGet.org |
 | 1.2.1 | Configuration and preview hardening | Released 2026-08-07 |
-| 1.2.2 | High-throughput configurable frame pipeline | Implemented |
-| 1.3.0 | Interactive camera controls | Implemented; iOS device verification pending |
+| 1.2.2 | High-throughput configurable frame pipeline | Released 2026-08-07 |
+| 1.3.0 | Interactive camera controls | Released 2026-08-07 |
+| 1.3.1 | Android preview rendering hardening | Released 2026-08-08 |
 | 1.4.0 | High-quality still photo capture | Planned |
 | 2.0.0 | Async and zero-copy frame pipeline | Exploration |
 
@@ -145,6 +146,24 @@ Exit criteria:
 - Controls behave consistently across camera switching, rotation, background/resume, and unsupported hardware.
 - Values are clamped or rejected deterministically according to the documented contract.
 - Physical-device tests cover at least one supported Android device and one supported iOS device.
+
+## 1.3.1 — Android preview rendering hardening
+
+This maintenance release fixes device-specific viewfinder distortion without changing the public API or frame-processing contract.
+
+Delivered scope:
+
+- Decouple Android's preview stream from the selected capture resolution and frame format.
+- Use one stable 720p-or-closest Camera2 preview output across default, low-bandwidth, balanced, custom, and raw profiles.
+- Replace device-dependent `TextureView` matrix correction with an aspect-preserving `SurfaceView` layout.
+- Apply one uniform aspect-fill scale and crop only the overflowing dimension across display rotations.
+- Add regression tests for portrait, landscape, mirroring, and profile transitions.
+
+Exit criteria:
+
+- Preview objects retain their proportions across capture profiles and device rotations on the Android reference device.
+- Screen lock and application resume recreate the native preview surface without a black viewfinder.
+- The package remains API- and binary-compatible with public version 1.3.0.
 
 ## 1.4.0 — High-quality still photo capture
 
